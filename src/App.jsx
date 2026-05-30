@@ -127,7 +127,6 @@ export default function RestaurantJoglo() {
 
     const unsubTxns = onSnapshot(collection(db, "txns"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // PENGAMANAN DATA: Pastikan date valid
       const validData = data.filter(d => d && d.date);
       validData.sort((a, b) => new Date(b.date) - new Date(a.date));
       setTxns(validData);
@@ -272,6 +271,19 @@ export default function RestaurantJoglo() {
     }
   };
 
+  // --- 🔥 FUNGSI BARU: RESET LAPORAN 🔥 ---
+  const resetTransactions = async () => {
+    if (!window.confirm("⚠️ PERINGATAN: Yakin mau menghapus SEMUA riwayat transaksi/laporan? Data ini TIDAK BISA dikembalikan!")) return;
+    try {
+      for (const t of txns) {
+        await deleteDoc(doc(db, "txns", t.id));
+      }
+      alert("Bersih! Semua data laporan dan riwayat transaksi berhasil dihapus.");
+    } catch (e) {
+      alert("Gagal menghapus riwayat transaksi. Cek koneksi internet.");
+    }
+  };
+
   const openMenuEdit = (item) => {
     setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
     setMenuModal(item ? "edit" : "new");
@@ -309,7 +321,7 @@ export default function RestaurantJoglo() {
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
   };
 
-  // --- LOGIKA FILTER & REPORTING (DENGAN PENGAMANAN DATA) ---
+  // --- LOGIKA FILTER & REPORTING ---
   const categories = ["Semua", ...new Set(menu.map((m) => m.category || "Umum"))];
   const filteredMenu = menu.filter((m) => {
     const mc = catFilter === "Semua" || (m.category || "Umum") === catFilter;
@@ -623,10 +635,18 @@ export default function RestaurantJoglo() {
                     <button className="btn" onClick={() => { setRepStart(""); setRepEnd(""); }} style={{ fontSize: ".75rem", padding: ".4rem .6rem", background: C.redBg, color: C.red, borderRadius: 7 }}>Clear</button>
                   )}
                 </div>
-                <button className="btn" onClick={exportToCSV}
-                  style={{ background: C.green, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
-                  📥 Download Data (CSV)
-                </button>
+                
+                {/* 🔴 TOMBOL RESET LAPORAN ADA DI SINI */}
+                <div style={{ display: "flex", gap: ".5rem" }}>
+                  <button className="btn" onClick={resetTransactions}
+                    style={{ background: C.red, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
+                    🗑️ Reset Laporan
+                  </button>
+                  <button className="btn" onClick={exportToCSV}
+                    style={{ background: C.green, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
+                    📥 Download CSV
+                  </button>
+                </div>
               </div>
             </div>
 
