@@ -7,10 +7,16 @@ const fmt = (n) => new Intl.NumberFormat("id-ID").format(n);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
 const fmtDate = (iso) => {
   if (!iso) return "-";
-  return new Date(iso).toLocaleDateString("id-ID", {
-    day: "2-digit", month: "short", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  // Cek apakah 'iso' memang sebuah string atau bisa dikonversi ke date
+  try {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "Data rusak" : d.toLocaleDateString("id-ID", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch (e) {
+    return "Format salah";
+  }
 };
 
 const DB_USERS = {
