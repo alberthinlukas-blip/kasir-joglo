@@ -16,15 +16,30 @@ const DB_USERS = {
   "Budi": { password: "123456", role: "karyawan" }
 };
 
+// --- DATA MENU & STOK JOGLO LENGKAP ---
 const INIT_MENU = [
-  { id: "m1", name: "Nasi Goreng Joglo", category: "Nasi", price: 35000, icon: "🍳" },
-  { id: "m2", name: "Ayam Bakar Kampung", category: "Lauk", price: 45000, icon: "🍗" },
-  { id: "m3", name: "Es Teh Manis", category: "Minuman", price: 8000, icon: "🧋" }
+  { id: "m1", name: "Nasi Goreng Joglo", category: "Utama", price: 35000, icon: "🍳" },
+  { id: "m2", name: "Magelangan Spesial", category: "Utama", price: 30000, icon: "🍜" },
+  { id: "m3", name: "Nasi Rendang Rempah", category: "Utama", price: 45000, icon: "🍛" },
+  { id: "m4", name: "Ayam Bakar Kampung", category: "Lauk", price: 40000, icon: "🍗" },
+  { id: "m5", name: "Soto Ayam Kemangi", category: "Sup", price: 30000, icon: "🍲" },
+  { id: "m6", name: "Rawon Daging Sapi", category: "Sup", price: 40000, icon: "🥣" },
+  { id: "m7", name: "Burger Sapi Joglo", category: "Fusion", price: 35000, icon: "🍔" },
+  { id: "m8", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" },
+  { id: "m9", name: "Es Teh Manis", category: "Minuman", price: 8000, icon: "🧋" },
+  { id: "m10", name: "Wedang Jahe", category: "Minuman", price: 12000, icon: "☕" }
 ];
 
 const INIT_STOCK = [
   { id: "s1", name: "Beras", unit: "kg", quantity: 50, minQty: 10 },
-  { id: "s2", name: "Ayam", unit: "kg", quantity: 4, minQty: 5 }
+  { id: "s2", name: "Mie Kuning", unit: "porsi", quantity: 40, minQty: 10 },
+  { id: "s3", name: "Daging Sapi", unit: "kg", quantity: 15, minQty: 3 },
+  { id: "s4", name: "Ayam Kampung", unit: "porsi", quantity: 30, minQty: 5 },
+  { id: "s5", name: "Roti Burger", unit: "pcs", quantity: 20, minQty: 5 },
+  { id: "s6", name: "Tempe", unit: "papan", quantity: 20, minQty: 5 },
+  { id: "s7", name: "Telur", unit: "butir", quantity: 60, minQty: 15 },
+  { id: "s8", name: "Teh", unit: "pack", quantity: 10, minQty: 2 },
+  { id: "s9", name: "Jahe", unit: "kg", quantity: 5, minQty: 1 }
 ];
 
 const C = {
@@ -160,7 +175,7 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
-  // --- 🔥 PEMBARUAN: FUNGSI BAYAR & POTONG STOK ANTI GAGAL 🔥 ---
+  // --- 🔥 RESEP OTOMATIS SUPER LENGKAP 🔥 ---
   const doPayment = async () => {
     if (!cart.length) return;
     const tx = {
@@ -181,25 +196,35 @@ export default function RestaurantJoglo() {
         const menuName = cartItem.name.toLowerCase();
         let recipe = null;
         
-        // 1. Deteksi Kata Kunci Menu Fleksibel
+        // Pemetaan Resep berdasarkan Kata Kunci Menu
         if (menuName.includes("nasi goreng")) {
-          recipe = [{ stockKeyword: "beras", qty: 0.25 }];
+          recipe = [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
+        } else if (menuName.includes("magelangan")) {
+          recipe = [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "mie", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+        } else if (menuName.includes("rendang")) {
+          recipe = [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "daging sapi", qty: 0.2 }];
         } else if (menuName.includes("ayam")) {
-          recipe = [{ stockKeyword: "ayam", qty: 0.3 }];
+          recipe = [{ stockKeyword: "ayam", qty: 1 }];
+        } else if (menuName.includes("soto")) {
+          recipe = [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "ayam", qty: 0.5 }];
+        } else if (menuName.includes("rawon")) {
+          recipe = [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "daging sapi", qty: 0.15 }];
+        } else if (menuName.includes("burger")) {
+          recipe = [{ stockKeyword: "roti", qty: 1 }, { stockKeyword: "daging sapi", qty: 0.1 }];
+        } else if (menuName.includes("mendoan")) {
+          recipe = [{ stockKeyword: "tempe", qty: 0.5 }];
         } else if (menuName.includes("teh")) {
           recipe = [{ stockKeyword: "teh", qty: 0.05 }];
+        } else if (menuName.includes("jahe")) {
+          recipe = [{ stockKeyword: "jahe", qty: 0.1 }];
         }
 
         if (recipe) {
           for (const ing of recipe) {
-            // 2. Deteksi Kata Kunci Bahan Baku Fleksibel
             const stockTarget = stock.find(s => s.name.toLowerCase().includes(ing.stockKeyword));
-            
             if (stockTarget) {
               const deduction = ing.qty * cartItem.qty;
               const newQty = stockTarget.quantity - deduction;
-              
-              // 3. Update ke Firebase
               await updateDoc(doc(db, "stock", stockTarget.id), {
                 quantity: Number(newQty.toFixed(2)) 
               });
@@ -219,7 +244,6 @@ export default function RestaurantJoglo() {
     }
   };
 
-  // --- 🔥 PEMBARUAN: FUNGSI CETAK KEMBALI KE VERSI AWAL YANG SUKSES 🔥 ---
   const handlePrintAndClose = () => {
     window.onafterprint = () => {
       setReceipt(null);
@@ -229,6 +253,24 @@ export default function RestaurantJoglo() {
   };
 
   const payOk = payMethod !== "Tunai" || Number(cashIn) >= cartTotal;
+
+  // --- 🔥 TOMBOL SAKTI UNTUK RESET DATA LAMA 🔥 ---
+  const resetDatabase = async () => {
+    if (!window.confirm("Beneran mau hapus semua Menu & Stok lama dan ganti dengan data khusus Resto Joglo?")) return;
+    try {
+      // Hapus yang lama
+      for (const m of menu) await deleteDoc(doc(db, "menu", m.id));
+      for (const s of stock) await deleteDoc(doc(db, "stock", s.id));
+      
+      // Masukkan yang baru
+      for (const m of INIT_MENU) await addDoc(collection(db, "menu"), { name: m.name, category: m.category, price: m.price, icon: m.icon });
+      for (const s of INIT_STOCK) await addDoc(collection(db, "stock"), { name: s.name, unit: s.unit, quantity: s.quantity, minQty: s.minQty });
+      
+      alert("Selesai! Database berhasil di-reset. Menu dan Stok Joglo sudah aktif.");
+    } catch (e) {
+      alert("Gagal mereset database. Cek koneksi internet.");
+    }
+  };
 
   const openMenuEdit = (item) => {
     setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
@@ -243,7 +285,6 @@ export default function RestaurantJoglo() {
       price: Number(menuForm.price), 
       icon: menuForm.icon || "🍽️" 
     };
-
     try {
       if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
       else await updateDoc(doc(db, "menu", menuForm.id), itemData);
@@ -264,7 +305,6 @@ export default function RestaurantJoglo() {
       quantity: Number(stockForm.quantity),
       minQty: Number(stockForm.minQty)
     };
-
     try {
       if (stockModal === "new") await addDoc(collection(db, "stock"), itemData);
       else await updateDoc(doc(db, "stock", stockForm.id), itemData);
@@ -501,10 +541,17 @@ export default function RestaurantJoglo() {
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", color: C.primary }}>📋 Manajemen Menu</div>
-              <button className="btn" onClick={() => openMenuEdit(null)}
-                style={{ background: C.accent, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".4rem" }}>
-                + Tambah Menu
-              </button>
+              <div style={{ display: "flex", gap: ".5rem" }}>
+                {/* TOMBOL RESET SAKTI */}
+                <button className="btn" onClick={resetDatabase}
+                  style={{ background: C.red, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".4rem" }}>
+                  🔄 Reset Menu Joglo
+                </button>
+                <button className="btn" onClick={() => openMenuEdit(null)}
+                  style={{ background: C.accent, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".4rem" }}>
+                  + Tambah Menu
+                </button>
+              </div>
             </div>
             <div style={{ display: "grid", gap: ".55rem" }}>
               {menu.map((item) => (
