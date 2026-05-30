@@ -1178,7 +1178,7 @@ export default function RestaurantJoglo() {
           <div className="print-only">
             <div style={{ textAlign: "center" }}>
               <h2 style={{ margin: 0, fontSize: "20px" }}>Joglo Kresna</h2>
-              <p style={{ margin: 0, fontSize: "12px" }}>Jl. Kenangan No. 1, Yogyakarta</p>
+              <p style={{ margin: 0, fontSize: "12px" }}>Jln. Kalisoro No. 7, Kab. Sleman</p>
             </div>
             <div className="garis-putus"></div>
             <p style={{ margin: 0 }}>
