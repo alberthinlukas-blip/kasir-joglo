@@ -160,7 +160,7 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
-  // --- 🔥 PEMBARUAN: FUNGSI BAYAR & POTONG STOK OTOMATIS 🔥 ---
+  // --- 🔥 PEMBARUAN: FUNGSI BAYAR & POTONG STOK LEBIH PINTAR 🔥 ---
   const doPayment = async () => {
     if (!cart.length) return;
     const tx = {
@@ -175,33 +175,30 @@ export default function RestaurantJoglo() {
     };
     
     try {
-      // 1. Simpan Transaksi ke Firebase
       await addDoc(collection(db, "txns"), tx);
 
-      // 2. KAMUS RESEP (Bill of Materials)
-      // Kalau nama menu cocok, maka stok yang disebutkan akan dikurangi
+      // KAMUS RESEP DENGAN HURUF KECIL SEMUA AGAR KEBAL ERROR TYPO
       const RECIPES_DEMO = {
-        "Nasi Goreng Joglo": [{ stockName: "Beras", qtyReq: 0.25 }],
-        "Ayam Bakar Kampung": [{ stockName: "Ayam", qtyReq: 0.3 }]
+        "nasi goreng joglo": [{ stockName: "beras", qtyReq: 0.25 }],
+        "ayam bakar kampung": [{ stockName: "ayam", qtyReq: 0.3 }]
       };
 
-      // 3. Proses Pengurangan Stok
       for (const cartItem of cart) {
-        const recipe = RECIPES_DEMO[cartItem.name]; // Cek apakah menu ini ada resepnya
+        // Cek menu pakai huruf kecil
+        const menuNameLower = cartItem.name.toLowerCase();
+        const recipe = RECIPES_DEMO[menuNameLower]; 
         
         if (recipe) {
           for (const ingredient of recipe) {
-            // Cari ID bahan baku di database Firebase berdasarkan namanya
-            const stockTarget = stock.find(s => s.name === ingredient.stockName);
+            // Cari bahan baku pakai huruf kecil juga
+            const stockTarget = stock.find(s => s.name.toLowerCase() === ingredient.stockName.toLowerCase());
             
             if (stockTarget) {
-              // Hitung jumlah yang harus dipotong (Kebutuhan x Jumlah Porsi yang dibeli)
               const totalDeduction = ingredient.qtyReq * cartItem.qty;
               const newQty = stockTarget.quantity - totalDeduction;
               
-              // Perbarui angka stok di Firebase!
               await updateDoc(doc(db, "stock", stockTarget.id), {
-                quantity: Number(newQty.toFixed(2)) // Dibulatkan agar tidak error 0.0000001
+                quantity: Number(newQty.toFixed(2)) 
               });
             }
           }
@@ -219,9 +216,15 @@ export default function RestaurantJoglo() {
     }
   };
 
+  // --- 🔥 PEMBARUAN: FUNGSI CETAK ANTI-BLOKIR SAFARI 🔥 ---
   const handlePrintAndClose = () => {
-    window.onafterprint = () => { setReceipt(null); window.onafterprint = null; };
+    // 1. Munculkan dialog print
     window.print();
+    
+    // 2. Beri jeda sedikit, baru tutup popup struknya di layar kasir
+    setTimeout(() => {
+      setReceipt(null);
+    }, 800); 
   };
 
   const payOk = payMethod !== "Tunai" || Number(cashIn) >= cartTotal;
