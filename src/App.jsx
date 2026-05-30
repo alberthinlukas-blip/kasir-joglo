@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 
 const fmt = (n) => new Intl.NumberFormat("id-ID").format(n);
@@ -109,6 +109,12 @@ export default function RestaurantJoglo() {
   // Filter Tanggal Laporan
   const [repStart, setRepStart] = useState("");
   const [repEnd, setRepEnd] = useState("");
+
+  // ── State baru: edit & hapus transaksi individual ──
+  const [txnEditModal, setTxnEditModal] = useState(null); // null | 'edit'
+  const [txnForm, setTxnForm] = useState({});
+  const [confirmDelTxn, setConfirmDelTxn] = useState(null); // null | { id, no }
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const NAV_TABS = [
     { key: "kasir", icon: "🧾", label: "Kasir", roles: ["owner", "karyawan"] },
@@ -266,21 +272,37 @@ export default function RestaurantJoglo() {
       for (const s of stock) await deleteDoc(doc(db, "stock", s.id));
       for (const m of INIT_MENU) await addDoc(collection(db, "menu"), { name: m.name, category: m.category, price: m.price, icon: m.icon });
       for (const s of INIT_STOCK) await addDoc(collection(db, "stock"), { name: s.name, unit: s.unit, quantity: s.quantity, minQty: s.minQty });
-      alert("Selesai! Database berhasil di-reset. Menu dan Stok Joglo sudah aktif.");
+      alert("Selesai! Database berhasil di-reset.");
     } catch (e) {
       alert("Gagal mereset database. Cek koneksi internet.");
     }
   };
 
+  // ✅ FIX: Pakai writeBatch agar tidak kena rate-limit Firebase saat hapus banyak dokumen.
+  //    Reset sekarang menghapus sesuai filter tanggal aktif — kalau tidak ada filter, hapus semua.
   const resetTransactions = async () => {
-    if (!window.confirm("⚠️ PERINGATAN: Yakin mau menghapus SEMUA riwayat transaksi/laporan? Data ini TIDAK BISA dikembalikan!")) return;
+    const scope = (repStart || repEnd) ? "transaksi sesuai filter tanggal" : "SEMUA riwayat transaksi";
+    if (!window.confirm(`⚠️ PERINGATAN: Yakin mau menghapus ${scope}? Data ini TIDAK BISA dikembalikan!`)) return;
+
+    setIsDeleting(true);
     try {
-      const idsToDelete = txns.map(t => t.id);
-      await Promise.all(idsToDelete.map(id => deleteDoc(doc(db, "txns", id))));
-      alert("Bersih! Semua data laporan dan riwayat transaksi berhasil dihapus.");
+      const toDelete = filteredTxns; // ← respek filter; kalau kosong filter = semua txns
+      if (toDelete.length === 0) { alert("Tidak ada transaksi yang perlu dihapus."); setIsDeleting(false); return; }
+
+      // Firestore batch max 500 ops — pecah jadi chunks
+      const CHUNK = 500;
+      for (let i = 0; i < toDelete.length; i += CHUNK) {
+        const chunk = toDelete.slice(i, i + CHUNK);
+        const batch = writeBatch(db);
+        chunk.forEach(t => batch.delete(doc(db, "txns", t.id)));
+        await batch.commit();
+      }
+      alert(`Bersih! ${toDelete.length} transaksi berhasil dihapus.`);
     } catch (e) {
       console.error(e);
-      alert("Gagal menghapus sebagian riwayat. Coba tekan tombol Reset sekali lagi!");
+      alert("Gagal menghapus sebagian transaksi. Coba lagi!");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -319,6 +341,65 @@ export default function RestaurantJoglo() {
       await deleteDoc(doc(db, type, id));
       setConfirmDel(null);
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
+  };
+
+  // ── Fungsi edit & hapus transaksi individual ──
+  const openTxnEdit = (tx) => {
+    setTxnForm({
+      id: tx.id,
+      no: tx.no,
+      date: tx.date,
+      items: tx.items,
+      total: tx.total,
+      method: tx.method || "Tunai",
+      cash: tx.cash || tx.total,
+      change: tx.change || 0,
+      cashier: tx.cashier || "-",
+    });
+    setTxnEditModal("edit");
+  };
+
+  const saveTxnEdit = async () => {
+    const updatedTotal = txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0);
+    const updatedChange = txnForm.method === "Tunai" ? Number(txnForm.cash) - updatedTotal : 0;
+    try {
+      await updateDoc(doc(db, "txns", txnForm.id), {
+        method: txnForm.method,
+        cash: txnForm.method === "Tunai" ? Number(txnForm.cash) : updatedTotal,
+        change: updatedChange,
+        total: updatedTotal,
+        items: txnForm.items,
+      });
+      setTxnEditModal(null);
+    } catch (e) { alert("Gagal menyimpan perubahan transaksi!"); }
+  };
+
+  const confirmDeleteTxn = (tx) => setConfirmDelTxn({ id: tx.id, no: tx.no });
+
+  const doDeleteTxn = async () => {
+    if (!confirmDelTxn) return;
+    try {
+      await deleteDoc(doc(db, "txns", confirmDelTxn.id));
+      setConfirmDelTxn(null);
+    } catch (e) { alert("Gagal menghapus transaksi dari Cloud!"); }
+  };
+
+  // ── Logika qty item di dalam modal edit transaksi ──
+  const txnItemDec = (idx) => {
+    setTxnForm(p => {
+      const items = [...p.items];
+      if (items[idx].qty <= 1) items.splice(idx, 1);
+      else items[idx] = { ...items[idx], qty: items[idx].qty - 1 };
+      return { ...p, items };
+    });
+  };
+
+  const txnItemInc = (idx) => {
+    setTxnForm(p => {
+      const items = [...p.items];
+      items[idx] = { ...items[idx], qty: items[idx].qty + 1 };
+      return { ...p, items };
+    });
   };
 
   // --- LOGIKA FILTER & REPORTING ---
@@ -374,7 +455,6 @@ export default function RestaurantJoglo() {
 
   const lowStock = stock.filter((s) => (s.quantity || 0) <= (s.minQty || 0));
 
-  // ✅ FIX: CSV export dengan proper quoting agar aman meski nama menu/alamat ada koma
   const escapeCSV = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const exportToCSV = () => {
     if (filteredTxns.length === 0) return alert("Belum ada transaksi di rentang tanggal ini.");
@@ -397,6 +477,10 @@ export default function RestaurantJoglo() {
     link.click();
     document.body.removeChild(link);
   };
+
+  // Hitung total dari txnForm.items (untuk modal edit transaksi)
+  const txnFormTotal = txnForm.items ? txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0) : 0;
+  const txnFormChange = txnForm.method === "Tunai" ? Number(txnForm.cash || 0) - txnFormTotal : 0;
 
   const CartPanel = ({ asModal = false }) => (
     <div className={asModal ? "" : "card"} style={{
@@ -632,13 +716,13 @@ export default function RestaurantJoglo() {
                   <span style={{ fontSize: ".8rem", color: C.textLight }}>s.d</span>
                   <input type="date" className="inp" style={{ width: "auto", padding: ".4rem .6rem" }} value={repEnd} onChange={(e) => setRepEnd(e.target.value)} />
                   {(repStart || repEnd) && (
-                    <button className="btn" onClick={() => { setRepStart(""); setRepEnd(""); }} style={{ fontSize: ".75rem", padding: ".4rem .6rem", background: C.redBg, color: C.red, borderRadius: 7 }}>Clear</button>
+                    <button className="btn" onClick={() => { setRepStart(""); setRepEnd(""); }} style={{ fontSize: ".75rem", padding: ".4rem .6rem", background: C.redBg, color: C.red, borderRadius: 7 }}>✕ Clear</button>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: ".5rem" }}>
-                  <button className="btn" onClick={resetTransactions}
-                    style={{ background: C.red, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
-                    🗑️ Reset Laporan
+                  <button className="btn" onClick={resetTransactions} disabled={isDeleting}
+                    style={{ background: isDeleting ? "#ccc" : C.red, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center", cursor: isDeleting ? "not-allowed" : "pointer" }}>
+                    {isDeleting ? "⏳ Menghapus..." : `🗑️ Reset${(repStart || repEnd) ? " (Sesuai Filter)" : " Semua"}`}
                   </button>
                   <button className="btn" onClick={exportToCSV}
                     style={{ background: C.green, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
@@ -648,7 +732,6 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* ✅ FIX: Tambah kartu Rata-rata/Transaksi yang tadinya dihitung tapi tidak ditampilkan */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: ".75rem" }}>
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💰</div>
@@ -722,8 +805,12 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
+            {/* ── Riwayat Transaksi dengan tombol Edit & Hapus ── */}
             <div className="card" style={{ padding: "1.25rem" }}>
-              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Riwayat Transaksi (Sesuai Filter)</div>
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>
+                🧾 Riwayat Transaksi
+                {(repStart || repEnd) && <span style={{ fontSize: ".7rem", color: C.textMuted, fontWeight: 400, marginLeft: ".5rem" }}>(Sesuai Filter)</span>}
+              </div>
               {filteredTxns.length === 0 ? (
                 <div style={{ textAlign: "center", color: C.textMuted, padding: "1.5rem", fontSize: ".85rem" }}>Belum ada transaksi di rentang tanggal ini.</div>
               ) : (
@@ -731,7 +818,7 @@ export default function RestaurantJoglo() {
                   {filteredTxns.slice(0, 30).map((tx) => {
                     const mCol = { Tunai: [C.greenBg, C.green], QRIS: [C.blueBg, C.blue], Kartu: [C.purpleBg, C.purple] }[tx.method] || [C.surfaceAlt, C.textLight];
                     return (
-                      <div key={tx.id} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".55rem .7rem", background: C.surfaceAlt, borderRadius: 9 }}>
+                      <div key={tx.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".55rem .7rem", background: C.surfaceAlt, borderRadius: 9 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: ".8rem", color: C.text }}>{tx.no}</div>
                           <div style={{ fontSize: ".7rem", color: C.textLight }}>{fmtDate(tx.date)}</div>
@@ -739,16 +826,32 @@ export default function RestaurantJoglo() {
                             {Array.isArray(tx.items) ? tx.items.map((i) => i.name).join(", ") : "Pesanan tidak diketahui"}
                           </div>
                         </div>
-                        <div style={{ textAlign: "right" }}>
+                        <div style={{ textAlign: "right", marginRight: ".25rem" }}>
                           <div style={{ fontWeight: 700, fontSize: ".88rem", color: C.accent }}>{fmtRp(tx.total)}</div>
                           <div style={{ display: "flex", justifyContent: "flex-end", gap: ".3rem", marginTop: ".2rem", alignItems: "center" }}>
                             <span style={{ fontSize: ".62rem", background: mCol[0], color: mCol[1], borderRadius: 99, padding: "1px 7px" }}>{tx.method || "Tunai"}</span>
                             <span style={{ fontSize: ".62rem", color: C.primaryMid }}>Kasir: {tx.cashier || "-"}</span>
                           </div>
                         </div>
+                        {/* ── Tombol Edit & Hapus per transaksi ── */}
+                        <div style={{ display: "flex", flexDirection: "column", gap: ".3rem", flexShrink: 0 }}>
+                          <button className="btn" onClick={() => openTxnEdit(tx)}
+                            style={{ padding: ".28rem .55rem", background: C.blueBg, color: C.blue, borderRadius: 7, fontSize: ".72rem", display: "flex", alignItems: "center", gap: ".25rem" }}>
+                            ✏️ Edit
+                          </button>
+                          <button className="btn" onClick={() => confirmDeleteTxn(tx)}
+                            style={{ padding: ".28rem .55rem", background: C.redBg, color: C.red, borderRadius: 7, fontSize: ".72rem", display: "flex", alignItems: "center", gap: ".25rem" }}>
+                            🗑️ Hapus
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
+                  {filteredTxns.length > 30 && (
+                    <div style={{ textAlign: "center", fontSize: ".75rem", color: C.textMuted, padding: ".5rem" }}>
+                      Menampilkan 30 dari {filteredTxns.length} transaksi. Gunakan filter tanggal untuk mempersempit.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -816,7 +919,9 @@ export default function RestaurantJoglo() {
         )}
       </main>
 
-      {/* ═══ MODALS & POP-UPS ═══ */}
+      {/* ═══════════════════════════════════════
+          MODALS & POP-UPS
+      ═══════════════════════════════════════ */}
 
       {/* Mobile Cart */}
       {isMobile && showCart && (
@@ -947,7 +1052,6 @@ export default function RestaurantJoglo() {
             </div>
           </div>
 
-          {/* Area Cetak Struk - hanya muncul saat print */}
           <div className="print-only">
             <div style={{ textAlign: "center" }}>
               <h2 style={{ margin: 0, fontSize: "20px" }}>Resto Joglo Alberthin</h2>
@@ -1000,6 +1104,92 @@ export default function RestaurantJoglo() {
             </p>
           </div>
         </>
+      )}
+
+      {/* ── Modal Edit Transaksi ── */}
+      {txnEditModal === "edit" && txnForm.id && (
+        <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setTxnEditModal(null)}>
+          <div className="modal" style={{ maxWidth: 460, maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: ".2rem" }}>✏️ Edit Transaksi</div>
+            <div style={{ fontSize: ".72rem", color: C.textMuted, marginBottom: "1rem" }}>{txnForm.no} · {fmtDate(txnForm.date)} · Kasir: {txnForm.cashier}</div>
+
+            {/* Item list — bisa +/- qty atau hapus item */}
+            <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Rincian Item</div>
+            <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".6rem", marginBottom: "1rem", display: "flex", flexDirection: "column", gap: ".35rem" }}>
+              {txnForm.items && txnForm.items.length > 0 ? txnForm.items.map((item, idx) => (
+                <div key={idx} style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
+                  <span style={{ fontSize: "1.1rem" }}>{item.icon || "🍽️"}</span>
+                  <div style={{ flex: 1, fontSize: ".8rem", color: C.text }}>{item.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: ".3rem" }}>
+                    <button className="btn" onClick={() => txnItemDec(idx)}
+                      style={{ width: 22, height: 22, borderRadius: "50%", border: `1.5px solid ${C.red}`, background: "white", color: C.red, fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                    <span style={{ fontSize: ".85rem", fontWeight: 700, minWidth: 18, textAlign: "center" }}>{item.qty}</span>
+                    <button className="btn" onClick={() => txnItemInc(idx)}
+                      style={{ width: 22, height: 22, borderRadius: "50%", background: C.accent, border: "none", color: "white", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                  </div>
+                  <div style={{ fontSize: ".75rem", color: C.accent, fontWeight: 600, minWidth: 70, textAlign: "right" }}>{fmtRp(item.price * item.qty)}</div>
+                </div>
+              )) : (
+                <div style={{ fontSize: ".8rem", color: C.textMuted, textAlign: "center", padding: ".5rem" }}>Semua item dihapus</div>
+              )}
+              <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".25rem", paddingTop: ".4rem", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: ".85rem" }}>
+                <span>Total Baru</span>
+                <span style={{ color: C.accent }}>{fmtRp(txnFormTotal)}</span>
+              </div>
+            </div>
+
+            {/* Ganti metode bayar */}
+            <div style={{ marginBottom: "1rem" }}>
+              <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Metode Pembayaran</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: ".4rem" }}>
+                {[["Tunai", "💵"], ["QRIS", "📱"], ["Kartu", "💳"]].map(([m, ic]) => (
+                  <button key={m} className="btn" onClick={() => setTxnForm(p => ({ ...p, method: m }))}
+                    style={{ padding: ".5rem", border: `2px solid ${txnForm.method === m ? C.accent : C.border}`, borderRadius: 9, background: txnForm.method === m ? "#FFF3DC" : "white", color: txnForm.method === m ? C.accent : C.primaryMid, fontSize: ".78rem", fontWeight: txnForm.method === m ? 600 : 400 }}>
+                    {ic} {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {txnForm.method === "Tunai" && (
+              <div style={{ marginBottom: "1rem" }}>
+                <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".35rem" }}>Uang Diterima</div>
+                <input className="inp" type="number" value={txnForm.cash || ""} onChange={(e) => setTxnForm(p => ({ ...p, cash: e.target.value }))} />
+                {txnFormChange >= 0 && Number(txnForm.cash) > 0 && (
+                  <div style={{ marginTop: ".35rem", fontSize: ".83rem", color: txnFormChange >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                    Kembalian: {fmtRp(txnFormChange)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: ".5rem", marginTop: ".25rem" }}>
+              <button className="btn" onClick={() => setTxnEditModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
+              <button className="btn" onClick={saveTxnEdit} disabled={txnForm.items && txnForm.items.length === 0}
+                style={{ flex: 2, padding: ".6rem", background: txnForm.items && txnForm.items.length > 0 ? C.accent : "#ccc", color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700, cursor: txnForm.items && txnForm.items.length > 0 ? "pointer" : "not-allowed" }}>
+                ✅ Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Konfirmasi Hapus Transaksi Individual ── */}
+      {confirmDelTxn && (
+        <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setConfirmDelTxn(null)}>
+          <div className="modal" style={{ maxWidth: 360, textAlign: "center" }}>
+            <div style={{ fontSize: "2rem", marginBottom: ".5rem" }}>🗑️</div>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1rem", color: C.primary, marginBottom: ".5rem" }}>Hapus transaksi ini?</div>
+            <div style={{ fontSize: ".85rem", color: C.textMid, marginBottom: "1.25rem" }}>
+              <strong>{confirmDelTxn.no}</strong> akan dihapus permanen dari laporan.
+            </div>
+            <div style={{ display: "flex", gap: ".5rem" }}>
+              <button className="btn" onClick={() => setConfirmDelTxn(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
+              <button className="btn" onClick={doDeleteTxn}
+                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Menu Edit Modal */}
@@ -1076,7 +1266,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* Confirm Delete */}
+      {/* Confirm Delete Menu/Stok */}
       {confirmDel && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setConfirmDel(null)}>
           <div className="modal" style={{ maxWidth: 360, textAlign: "center" }}>
