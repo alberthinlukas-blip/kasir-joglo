@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-
-// IMPORT FIREBASE
 import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
@@ -104,27 +102,23 @@ export default function RestaurantJoglo() {
     return () => window.removeEventListener("resize", h);
   }, []);
 
-  // --- KONEKSI SINKRONISASI TOTAL KE FIREBASE ---
   useEffect(() => {
     try { const r = localStorage.getItem("jg_auth"); if (r) setAuthUser(JSON.parse(r)); } catch {}
 
-    // 1. Sinkronisasi Transaksi
     const unsubTxns = onSnapshot(collection(db, "txns"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       data.sort((a, b) => new Date(b.date) - new Date(a.date));
       setTxns(data);
     });
 
-    // 2. Sinkronisasi Menu
     const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMenu(data.length > 0 ? data : INIT_MENU); // Pakai INIT jika Firebase masih kosong
+      setMenu(data.length > 0 ? data : INIT_MENU); 
     });
 
-    // 3. Sinkronisasi Stok
     const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStock(data.length > 0 ? data : INIT_STOCK); // Pakai INIT jika Firebase masih kosong
+      setStock(data.length > 0 ? data : INIT_STOCK); 
     });
 
     return () => { unsubTxns(); unsubMenu(); unsubStock(); };
@@ -135,7 +129,6 @@ export default function RestaurantJoglo() {
     else localStorage.removeItem("jg_auth"); 
   }, [authUser]);
 
-  // --- FUNGSI LOGIN & LOGOUT ---
   const doLogin = (e) => {
     e.preventDefault();
     const user = DB_USERS[loginForm.username];
@@ -150,7 +143,6 @@ export default function RestaurantJoglo() {
 
   const doLogout = () => { if (window.confirm("Yakin ingin logout dari mesin kasir?")) setAuthUser(null); };
 
-  // --- LOGIKA KASIR ---
   const addToCart = useCallback((item) => {
     setCart((p) => {
       const ex = p.find((c) => c.id === item.id);
@@ -168,7 +160,7 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
-  // --- FUNGSI BAYAR (SIMPAN KE FIREBASE) ---
+  // --- 🔥 PEMBARUAN: FUNGSI BAYAR & POTONG STOK OTOMATIS 🔥 ---
   const doPayment = async () => {
     if (!cart.length) return;
     const tx = {
@@ -183,14 +175,47 @@ export default function RestaurantJoglo() {
     };
     
     try {
+      // 1. Simpan Transaksi ke Firebase
       await addDoc(collection(db, "txns"), tx);
+
+      // 2. KAMUS RESEP (Bill of Materials)
+      // Kalau nama menu cocok, maka stok yang disebutkan akan dikurangi
+      const RECIPES_DEMO = {
+        "Nasi Goreng Joglo": [{ stockName: "Beras", qtyReq: 0.25 }],
+        "Ayam Bakar Kampung": [{ stockName: "Ayam", qtyReq: 0.3 }]
+      };
+
+      // 3. Proses Pengurangan Stok
+      for (const cartItem of cart) {
+        const recipe = RECIPES_DEMO[cartItem.name]; // Cek apakah menu ini ada resepnya
+        
+        if (recipe) {
+          for (const ingredient of recipe) {
+            // Cari ID bahan baku di database Firebase berdasarkan namanya
+            const stockTarget = stock.find(s => s.name === ingredient.stockName);
+            
+            if (stockTarget) {
+              // Hitung jumlah yang harus dipotong (Kebutuhan x Jumlah Porsi yang dibeli)
+              const totalDeduction = ingredient.qtyReq * cartItem.qty;
+              const newQty = stockTarget.quantity - totalDeduction;
+              
+              // Perbarui angka stok di Firebase!
+              await updateDoc(doc(db, "stock", stockTarget.id), {
+                quantity: Number(newQty.toFixed(2)) // Dibulatkan agar tidak error 0.0000001
+              });
+            }
+          }
+        }
+      }
+
       setReceipt(tx);
       setCart([]);
       setShowPay(false);
       setShowCart(false);
       setCashIn("");
     } catch (e) {
-      alert("Gagal koneksi ke server. Pastikan internet aktif!");
+      alert("Gagal memproses pembayaran. Pastikan internet aktif!");
+      console.error(e);
     }
   };
 
@@ -201,7 +226,6 @@ export default function RestaurantJoglo() {
 
   const payOk = payMethod !== "Tunai" || Number(cashIn) >= cartTotal;
 
-  // --- FUNGSI MANAJEMEN MENU & STOK (SIMPAN KE FIREBASE) ---
   const openMenuEdit = (item) => {
     setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
     setMenuModal(item ? "edit" : "new");
@@ -246,13 +270,11 @@ export default function RestaurantJoglo() {
 
   const handleDelete = async (type, id) => {
     try {
-      // type bernilai "menu" atau "stock"
       await deleteDoc(doc(db, type, id));
       setConfirmDel(null);
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
   };
 
-  // --- FILTER & LAPORAN ---
   const categories = ["Semua", ...new Set(menu.map((m) => m.category))];
   const filteredMenu = menu.filter((m) => {
     const mc = catFilter === "Semua" || m.category === catFilter;
@@ -283,7 +305,6 @@ export default function RestaurantJoglo() {
 
   const lowStock = stock.filter((s) => s.quantity <= s.minQty);
 
-  // --- KOMPONEN KERANJANG KASIR ---
   const CartPanel = ({ asModal = false }) => (
     <div className={asModal ? "" : "card"} style={{
       background: C.surface, borderRadius: asModal ? 18 : 14, padding: "1rem",
@@ -344,7 +365,6 @@ export default function RestaurantJoglo() {
     </div>
   );
 
-  // --- LAYAR LOGIN ---
   if (!authUser) {
     return (
       <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
@@ -372,12 +392,10 @@ export default function RestaurantJoglo() {
     );
   }
 
-  // --- LAYAR APLIKASI UTAMA ---
   return (
     <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", background: C.bg, minHeight: "100vh", color: C.text }}>
       <style>{styles}</style>
 
-      {/* Header */}
       <header className="no-print" style={{ background: C.primary, padding: ".7rem 1.25rem", display: "flex", alignItems: "center", gap: "1rem", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 2px 20px rgba(0,0,0,.3)" }}>
         <div style={{ fontSize: "1.5rem" }}>🏛️</div>
         <div>
@@ -410,7 +428,6 @@ export default function RestaurantJoglo() {
         </div>
       </header>
 
-      {/* Navigasi Menu */}
       <nav className="no-print" style={{ background: C.primaryMid, padding: ".45rem 1rem", display: "flex", gap: ".4rem", overflowX: "auto", position: "sticky", top: 55, zIndex: 49, boxShadow: "0 2px 8px rgba(0,0,0,.15)" }}>
         {NAV_TABS.filter(n => n.roles.includes(authUser.role)).map((n) => (
           <button key={n.key} className="nav-tab" onClick={() => setTab(n.key)}
@@ -424,7 +441,6 @@ export default function RestaurantJoglo() {
 
       <main style={{ padding: "1rem", maxWidth: 1200, margin: "0 auto" }}>
         
-        {/* TAB: KASIR */}
         {tab === "kasir" && (
           <div className="no-print" style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 310px", gap: "1rem", alignItems: "start" }}>
             <div>
@@ -477,7 +493,6 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
-        {/* TAB: MANAJEMEN MENU */}
         {tab === "menu" && authUser.role === "owner" && (
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -510,7 +525,6 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
-        {/* TAB: LAPORAN */}
         {tab === "laporan" && authUser.role === "owner" && (
           <div className="no-print" style={{ display: "grid", gap: "1rem" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(170px,1fr))", gap: ".75rem" }}>
@@ -576,7 +590,6 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
-        {/* TAB: STOK */}
         {tab === "stok" && (
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -638,6 +651,7 @@ export default function RestaurantJoglo() {
       </main>
 
       {/* ═══ MODALS & POP-UPS ═══ */}
+
       {isMobile && showCart && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setShowCart(false)}>
           <div style={{ background: C.surface, borderRadius: 18, padding: "1.25rem", width: "100%", maxWidth: 400, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -747,9 +761,19 @@ export default function RestaurantJoglo() {
                   )}
                 </div>
               </div>
+
+              <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: "1rem", fontStyle: "italic" }}>
+                Terima kasih telah berkunjung ke Resto Joglo Alberthin 🏛️
+              </div>
               <div style={{ display: "flex", gap: ".5rem" }}>
-                <button className="btn" onClick={() => setReceipt(null)} style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10, fontWeight: 600 }}>Tutup</button>
-                <button className="btn" onClick={handlePrintAndClose} style={{ flex: 2, padding: ".65rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700 }}>🖨️ Cetak & Tutup</button>
+                <button className="btn" onClick={() => setReceipt(null)}
+                  style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10, fontWeight: 600 }}>
+                  Tutup
+                </button>
+                <button className="btn" onClick={handlePrintAndClose}
+                  style={{ flex: 2, padding: ".65rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700 }}>
+                  🖨️ Cetak & Tutup
+                </button>
               </div>
             </div>
           </div>
@@ -760,19 +784,50 @@ export default function RestaurantJoglo() {
               <p style={{ margin: 0, fontSize: "12px" }}>Jl. Kenangan No. 1, Yogyakarta</p>
             </div>
             <div className="garis-putus"></div>
-            <p style={{ margin: 0 }}>Waktu: {fmtDate(receipt.date)}<br />No. Inv: {receipt.no}<br />Kasir: {authUser.username}</p>
+            <p style={{ margin: 0 }}>
+              Waktu: {fmtDate(receipt.date)}<br />
+              No. Inv: {receipt.no}<br />
+              Kasir: {authUser.username}
+            </p>
             <div className="garis-putus"></div>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr><th style={{ textAlign: "left", paddingBottom: "5px" }}>Item</th><th style={{ textAlign: "right", paddingBottom: "5px" }}>Qty</th><th style={{ textAlign: "right", paddingBottom: "5px" }}>Total</th></tr></thead>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", paddingBottom: "5px" }}>Item</th>
+                  <th style={{ textAlign: "right", paddingBottom: "5px" }}>Qty</th>
+                  <th style={{ textAlign: "right", paddingBottom: "5px" }}>Total</th>
+                </tr>
+              </thead>
               <tbody>
-                {receipt.items.map((c) => (<tr key={c.id}><td style={{ padding: "4px 0" }}>{c.name}</td><td style={{ textAlign: "right", padding: "4px 0" }}>{c.qty}</td><td style={{ textAlign: "right", padding: "4px 0" }}>{fmtRp(c.price * c.qty)}</td></tr>))}
+                {receipt.items.map((c) => (
+                  <tr key={c.id}>
+                    <td style={{ padding: "4px 0" }}>{c.name}</td>
+                    <td style={{ textAlign: "right", padding: "4px 0" }}>{c.qty}</td>
+                    <td style={{ textAlign: "right", padding: "4px 0" }}>{fmtRp(c.price * c.qty)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             <div className="garis-putus"></div>
-            <div className="print-flex" style={{ fontWeight: "bold", fontSize: "16px" }}><span>TOTAL BAYAR:</span><span>{fmtRp(receipt.total)}</span></div>
+            <div className="print-flex" style={{ fontWeight: "bold", fontSize: "16px" }}>
+              <span>TOTAL BAYAR:</span>
+              <span>{fmtRp(receipt.total)}</span>
+            </div>
             <div className="garis-putus"></div>
-            <div className="print-flex"><span>{receipt.method}:</span><span>{fmtRp(receipt.cash)}</span></div>
-            {receipt.method === "Tunai" && (<div className="print-flex"><span>Kembalian:</span><span>{fmtRp(receipt.change)}</span></div>)}
+            <div className="print-flex">
+              <span>{receipt.method}:</span>
+              <span>{fmtRp(receipt.cash)}</span>
+            </div>
+            {receipt.method === "Tunai" && (
+              <div className="print-flex">
+                <span>Kembalian:</span>
+                <span>{fmtRp(receipt.change)}</span>
+              </div>
+            )}
+            <p style={{ textAlign: "center", marginTop: "15px" }}>
+              Harga sudah termasuk Pajak<br />
+              Terima Kasih!
+            </p>
           </div>
         </>
       )}
@@ -837,7 +892,7 @@ export default function RestaurantJoglo() {
                 </div>
               </div>
               <div>
-                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Stok Minimum</label>
+                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Stok Minimum (batas alert)</label>
                 <input className="inp" type="number" placeholder="10" value={stockForm.minQty || ""} onChange={(e) => setStockForm((p) => ({ ...p, minQty: e.target.value }))} />
               </div>
             </div>
