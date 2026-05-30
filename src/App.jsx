@@ -608,7 +608,7 @@ export default function RestaurantJoglo() {
         <style>{styles}</style>
         <div className="card" style={{ width: "100%", maxWidth: 360, padding: "2.5rem 2rem", textAlign: "center" }}>
           <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>🏛️</div>
-          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.4rem", color: C.primary, marginBottom: ".2rem", fontWeight: 700 }}>Resto Joglo Alberthin</div>
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.4rem", color: C.primary, marginBottom: ".2rem", fontWeight: 700 }}>Joglo Kresna</div>
           <div style={{ fontSize: ".85rem", color: C.textLight, marginBottom: "2.5rem" }}>Sistem Keamanan Mesin Kasir</div>
 
           <form onSubmit={doLogin} style={{ display: "flex", flexDirection: "column", gap: "1rem", textAlign: "left" }}>
@@ -636,7 +636,7 @@ export default function RestaurantJoglo() {
       <header className="no-print" style={{ background: C.primary, padding: ".7rem 1.25rem", display: "flex", alignItems: "center", gap: "1rem", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 2px 20px rgba(0,0,0,.3)" }}>
         <div style={{ fontSize: "1.5rem" }}>🏛️</div>
         <div>
-          <div style={{ fontFamily: "'Playfair Display',serif", color: C.accentLight, fontSize: "1.05rem", fontWeight: 700, letterSpacing: ".04em" }}>Resto Joglo Alberthin</div>
+          <div style={{ fontFamily: "'Playfair Display',serif", color: C.accentLight, fontSize: "1.05rem", fontWeight: 700, letterSpacing: ".04em" }}>Joglo Kresna</div>
           <div style={{ color: "#C4956A", fontSize: ".65rem", letterSpacing: ".1em" }}>SISTEM KASIR PRO</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: ".6rem" }}>
@@ -1177,7 +1177,7 @@ export default function RestaurantJoglo() {
 
           <div className="print-only">
             <div style={{ textAlign: "center" }}>
-              <h2 style={{ margin: 0, fontSize: "20px" }}>Resto Joglo Alberthin</h2>
+              <h2 style={{ margin: 0, fontSize: "20px" }}>Joglo Kresna</h2>
               <p style={{ margin: 0, fontSize: "12px" }}>Jl. Kenangan No. 1, Yogyakarta</p>
             </div>
             <div className="garis-putus"></div>
