@@ -271,16 +271,20 @@ export default function RestaurantJoglo() {
     }
   };
 
-  // --- 🔥 FUNGSI BARU: RESET LAPORAN 🔥 ---
+  // --- 🔥 FUNGSI RESET LAPORAN PARALEL YANG LEBIH AMAN 🔥 ---
   const resetTransactions = async () => {
     if (!window.confirm("⚠️ PERINGATAN: Yakin mau menghapus SEMUA riwayat transaksi/laporan? Data ini TIDAK BISA dikembalikan!")) return;
     try {
-      for (const t of txns) {
-        await deleteDoc(doc(db, "txns", t.id));
-      }
+      // Kita "kunci" dulu semua ID data sebelum dihapus agar tidak bentrok dengan sinkronisasi
+      const idsToDelete = txns.map(t => t.id);
+      
+      // Menggunakan Promise.all untuk menghapus serentak (paralel)
+      await Promise.all(idsToDelete.map(id => deleteDoc(doc(db, "txns", id))));
+      
       alert("Bersih! Semua data laporan dan riwayat transaksi berhasil dihapus.");
     } catch (e) {
-      alert("Gagal menghapus riwayat transaksi. Cek koneksi internet.");
+      console.error(e);
+      alert("Gagal menghapus sebagian riwayat. Coba tekan tombol Reset sekali lagi!");
     }
   };
 
