@@ -93,12 +93,20 @@ const styles = `
 
   .print-only { display: none; }
   @media print {
-    @page { margin: 0; } /* Ini yang menghilangkan header/footer otomatis */
-    body { background: white !important; margin: 0; padding: 10px; }
+    @page { margin: 0; }
     .no-print { display: none !important; }
-    body * { visibility: hidden; }
-    .print-only { display: block !important; position: absolute; left: 0; top: 0; width: 300px; font-size: 14px; visibility: visible; }
-    .print-only, .print-only * { color: black !important; font-family: monospace !important; }
+    body, html { visibility: hidden; margin: 0; padding: 0; }
+    .print-only { 
+      display: block !important; 
+      visibility: visible; 
+      position: static !important; 
+      width: 300px; 
+      margin: 0 auto; 
+      font-size: 14px; 
+      color: black !important; 
+      font-family: monospace !important; 
+    }
+    .print-only * { visibility: visible; }
     .garis-putus { border-bottom: 2px dashed #000 !important; margin: 10px 0 !important; }
     .print-flex { display: flex !important; justify-content: space-between !important; }
   }
