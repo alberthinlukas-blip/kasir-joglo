@@ -70,9 +70,10 @@ const styles = `
   .inp:focus{border-color:${C.accent}}
   .overlay{position:fixed;inset:0;background:rgba(44,24,16,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(4px)}
   .modal{background:${C.surface};border-radius:18px;padding:1.5rem;width:100%;max-width:430px;box-shadow:0 28px 72px rgba(74,32,0,.28)}
-  
+
   .print-only { display: none; }
   @media print {
+    .no-print { display: none !important; }
     body { background: white !important; margin: 0; padding: 0; }
     body * { visibility: hidden; }
     .print-only { display: block !important; position: absolute; left: 0; top: 0; width: 300px; font-size: 14px; }
@@ -85,7 +86,7 @@ const styles = `
 export default function RestaurantJoglo() {
   const [authUser, setAuthUser] = useState(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  
+
   const [tab, setTab] = useState("kasir");
   const [menu, setMenu] = useState([]);
   const [stock, setStock] = useState([]);
@@ -134,20 +135,20 @@ export default function RestaurantJoglo() {
 
     const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setMenu(data.length > 0 ? data : INIT_MENU); 
+      setMenu(data.length > 0 ? data : INIT_MENU);
     });
 
     const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setStock(data.length > 0 ? data : INIT_STOCK); 
+      setStock(data.length > 0 ? data : INIT_STOCK);
     });
 
     return () => { unsubTxns(); unsubMenu(); unsubStock(); };
   }, []);
 
-  useEffect(() => { 
-    if(authUser) localStorage.setItem("jg_auth", JSON.stringify(authUser)); 
-    else localStorage.removeItem("jg_auth"); 
+  useEffect(() => {
+    if (authUser) localStorage.setItem("jg_auth", JSON.stringify(authUser));
+    else localStorage.removeItem("jg_auth");
   }, [authUser]);
 
   const doLogin = (e) => {
@@ -193,14 +194,14 @@ export default function RestaurantJoglo() {
       change: payMethod === "Tunai" ? Number(cashIn) - cartTotal : 0,
       cashier: authUser.username,
     };
-    
+
     try {
       await addDoc(collection(db, "txns"), tx);
 
       for (const cartItem of cart) {
         const menuName = (cartItem.name || "").toLowerCase();
         let recipe = null;
-        
+
         if (menuName.includes("nasi goreng")) {
           recipe = [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
         } else if (menuName.includes("magelangan")) {
@@ -230,7 +231,7 @@ export default function RestaurantJoglo() {
               const deduction = ing.qty * cartItem.qty;
               const newQty = (stockTarget.quantity || 0) - deduction;
               await updateDoc(doc(db, "stock", stockTarget.id), {
-                quantity: Number(newQty.toFixed(2)) 
+                quantity: Number(newQty.toFixed(2))
               });
             }
           }
@@ -271,16 +272,11 @@ export default function RestaurantJoglo() {
     }
   };
 
-  // --- 🔥 FUNGSI RESET LAPORAN PARALEL YANG LEBIH AMAN 🔥 ---
   const resetTransactions = async () => {
     if (!window.confirm("⚠️ PERINGATAN: Yakin mau menghapus SEMUA riwayat transaksi/laporan? Data ini TIDAK BISA dikembalikan!")) return;
     try {
-      // Kita "kunci" dulu semua ID data sebelum dihapus agar tidak bentrok dengan sinkronisasi
       const idsToDelete = txns.map(t => t.id);
-      
-      // Menggunakan Promise.all untuk menghapus serentak (paralel)
       await Promise.all(idsToDelete.map(id => deleteDoc(doc(db, "txns", id))));
-      
       alert("Bersih! Semua data laporan dan riwayat transaksi berhasil dihapus.");
     } catch (e) {
       console.error(e);
@@ -354,7 +350,7 @@ export default function RestaurantJoglo() {
     if (tx.items && Array.isArray(tx.items)) {
       tx.items.forEach(item => {
         const itemName = item.name || "Menu Tak Bernama";
-        if(!itemSales[itemName]) itemSales[itemName] = { qty: 0, rev: 0, icon: item.icon || "🍽️" };
+        if (!itemSales[itemName]) itemSales[itemName] = { qty: 0, rev: 0, icon: item.icon || "🍽️" };
         itemSales[itemName].qty += (item.qty || 1);
         itemSales[itemName].rev += ((item.qty || 1) * (item.price || 0));
       });
@@ -363,7 +359,7 @@ export default function RestaurantJoglo() {
 
   const bestSellers = Object.entries(itemSales)
     .map(([name, data]) => ({ name, ...data }))
-    .sort((a,b) => b.qty - a.qty)
+    .sort((a, b) => b.qty - a.qty)
     .slice(0, 5);
 
   const chartData = Array.from({ length: 7 }, (_, i) => {
@@ -378,24 +374,25 @@ export default function RestaurantJoglo() {
 
   const lowStock = stock.filter((s) => (s.quantity || 0) <= (s.minQty || 0));
 
+  // ✅ FIX: CSV export dengan proper quoting agar aman meski nama menu/alamat ada koma
+  const escapeCSV = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const exportToCSV = () => {
     if (filteredTxns.length === 0) return alert("Belum ada transaksi di rentang tanggal ini.");
     const headers = ["Nomor Invoice", "Tanggal", "Rincian Pesanan", "Metode", "Kasir", "Total (Rp)"];
     const rows = filteredTxns.map(t => [
-      t.no || "-",
-      t.date ? new Date(t.date).toLocaleString('id-ID').replace(/,/g, '') : "-",
-      Array.isArray(t.items) ? t.items.map(i => `${i.name || "Menu"} (x${i.qty || 1})`).join(" | ") : "-",
-      t.method || "Tunai",
-      t.cashier || "System",
-      t.total || 0
+      escapeCSV(t.no || "-"),
+      escapeCSV(t.date ? new Date(t.date).toLocaleString("id-ID") : "-"),
+      escapeCSV(Array.isArray(t.items) ? t.items.map(i => `${i.name || "Menu"} (x${i.qty || 1})`).join(" | ") : "-"),
+      escapeCSV(t.method || "Tunai"),
+      escapeCSV(t.cashier || "System"),
+      escapeCSV(t.total || 0),
     ]);
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + headers.join(",") + "\n" 
-      + rows.map(e => e.join(",")).join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF"
+      + headers.map(escapeCSV).join(",") + "\n"
+      + rows.map(r => r.join(",")).join("\n");
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Laporan_Penjualan_Joglo.csv`);
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `Laporan_Penjualan_Joglo_${new Date().toLocaleDateString("id-ID").replace(/\//g, "-")}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -469,15 +466,15 @@ export default function RestaurantJoglo() {
           <div style={{ fontSize: "3.5rem", marginBottom: "1rem" }}>🏛️</div>
           <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.4rem", color: C.primary, marginBottom: ".2rem", fontWeight: 700 }}>Resto Joglo Alberthin</div>
           <div style={{ fontSize: ".85rem", color: C.textLight, marginBottom: "2.5rem" }}>Sistem Keamanan Mesin Kasir</div>
-          
+
           <form onSubmit={doLogin} style={{ display: "flex", flexDirection: "column", gap: "1rem", textAlign: "left" }}>
             <div>
               <label style={{ fontSize: ".75rem", fontWeight: 600, color: C.primaryMid, marginBottom: ".3rem", display: "block" }}>Username Kasir</label>
-              <input required className="inp" placeholder="Ketik Lucas atau Budi..." value={loginForm.username} onChange={(e) => setLoginForm(p => ({...p, username: e.target.value}))} />
+              <input required className="inp" placeholder="Ketik Lucas atau Budi..." value={loginForm.username} onChange={(e) => setLoginForm(p => ({ ...p, username: e.target.value }))} />
             </div>
             <div>
               <label style={{ fontSize: ".75rem", fontWeight: 600, color: C.primaryMid, marginBottom: ".3rem", display: "block" }}>Password / PIN</label>
-              <input required className="inp" type="password" placeholder="••••••" value={loginForm.password} onChange={(e) => setLoginForm(p => ({...p, password: e.target.value}))} />
+              <input required className="inp" type="password" placeholder="••••••" value={loginForm.password} onChange={(e) => setLoginForm(p => ({ ...p, password: e.target.value }))} />
             </div>
             <button type="submit" className="btn" style={{ background: C.accent, color: "white", padding: ".85rem", borderRadius: 9, fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", fontWeight: 700, marginTop: "1rem" }}>
               Buka Mesin Kasir
@@ -499,7 +496,6 @@ export default function RestaurantJoglo() {
           <div style={{ color: "#C4956A", fontSize: ".65rem", letterSpacing: ".1em" }}>SISTEM KASIR PRO</div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: ".6rem" }}>
-          
           <div style={{ display: "flex", alignItems: "center", gap: ".75rem", marginRight: ".75rem", borderRight: `1px solid ${C.primaryMid}`, paddingRight: "1.25rem" }}>
             <div style={{ textAlign: "right", display: isMobile ? "none" : "block" }}>
               <div style={{ fontSize: ".8rem", fontWeight: 700, color: C.surface }}>{authUser.username}</div>
@@ -536,7 +532,7 @@ export default function RestaurantJoglo() {
       </nav>
 
       <main style={{ padding: "1rem", maxWidth: 1200, margin: "0 auto" }}>
-        
+
         {/* TAB KASIR */}
         {tab === "kasir" && (
           <div className="no-print" style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 310px", gap: "1rem", alignItems: "start" }}>
@@ -627,7 +623,7 @@ export default function RestaurantJoglo() {
         {/* TAB LAPORAN */}
         {tab === "laporan" && authUser.role === "owner" && (
           <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-            
+
             <div className="card" style={{ padding: "1rem", background: C.surfaceAlt }}>
               <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: ".75rem", flexWrap: "wrap" }}>
@@ -639,8 +635,6 @@ export default function RestaurantJoglo() {
                     <button className="btn" onClick={() => { setRepStart(""); setRepEnd(""); }} style={{ fontSize: ".75rem", padding: ".4rem .6rem", background: C.redBg, color: C.red, borderRadius: 7 }}>Clear</button>
                   )}
                 </div>
-                
-                {/* 🔴 TOMBOL RESET LAPORAN ADA DI SINI */}
                 <div style={{ display: "flex", gap: ".5rem" }}>
                   <button className="btn" onClick={resetTransactions}
                     style={{ background: C.red, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
@@ -654,12 +648,22 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
+            {/* ✅ FIX: Tambah kartu Rata-rata/Transaksi yang tadinya dihitung tapi tidak ditampilkan */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: ".75rem" }}>
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💰</div>
                 <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Total Pendapatan (Sesuai Filter)</div>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.2rem", fontWeight: 700, color: C.accent }}>{fmtRp(totalFilteredRev)}</div>
                 <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>{filteredTxns.length} transaksi</div>
+              </div>
+
+              <div className="card" style={{ padding: "1.25rem" }}>
+                <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>📊</div>
+                <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Rata-rata per Transaksi</div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.2rem", fontWeight: 700, color: C.purple }}>{fmtRp(avgFilteredTx)}</div>
+                <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>
+                  {filteredTxns.length > 0 ? `dari ${filteredTxns.length} transaksi` : "belum ada data"}
+                </div>
               </div>
 
               <div className="card" style={{ padding: "1.25rem", gridColumn: "span 2" }}>
@@ -682,7 +686,6 @@ export default function RestaurantJoglo() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1.2fr", gap: "1rem" }}>
-              
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: "1rem" }}>📈 Grafik Omzet 7 Hari Terakhir</div>
                 <ResponsiveContainer width="100%" height={220}>
@@ -699,7 +702,7 @@ export default function RestaurantJoglo() {
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🏆 Top 5 Menu Terlaris</div>
                 {bestSellers.length === 0 ? (
-                   <div style={{ color: C.textMuted, fontSize: ".8rem", textAlign: "center", padding: "1rem" }}>Belum ada data penjualan.</div>
+                  <div style={{ color: C.textMuted, fontSize: ".8rem", textAlign: "center", padding: "1rem" }}>Belum ada data penjualan.</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
                     {bestSellers.map((item, idx) => (
@@ -739,8 +742,8 @@ export default function RestaurantJoglo() {
                         <div style={{ textAlign: "right" }}>
                           <div style={{ fontWeight: 700, fontSize: ".88rem", color: C.accent }}>{fmtRp(tx.total)}</div>
                           <div style={{ display: "flex", justifyContent: "flex-end", gap: ".3rem", marginTop: ".2rem", alignItems: "center" }}>
-                             <span style={{ fontSize: ".62rem", background: mCol[0], color: mCol[1], borderRadius: 99, padding: "1px 7px" }}>{tx.method || "Tunai"}</span>
-                             <span style={{ fontSize: ".62rem", color: C.primaryMid }}>Kasir: {tx.cashier || "-"}</span>
+                            <span style={{ fontSize: ".62rem", background: mCol[0], color: mCol[1], borderRadius: 99, padding: "1px 7px" }}>{tx.method || "Tunai"}</span>
+                            <span style={{ fontSize: ".62rem", color: C.primaryMid }}>Kasir: {tx.cashier || "-"}</span>
                           </div>
                         </div>
                       </div>
@@ -795,7 +798,7 @@ export default function RestaurantJoglo() {
                           <div style={{ height: "100%", width: `${pct}%`, background: isLow ? C.red : C.green, borderRadius: 99, transition: "width .3s" }} />
                         </div>
                       </div>
-                      
+
                       {authUser.role === "owner" && (
                         <div style={{ display: "flex", gap: ".4rem" }}>
                           <button className="btn" onClick={() => openStockEdit(item)}
@@ -814,6 +817,8 @@ export default function RestaurantJoglo() {
       </main>
 
       {/* ═══ MODALS & POP-UPS ═══ */}
+
+      {/* Mobile Cart */}
       {isMobile && showCart && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setShowCart(false)}>
           <div style={{ background: C.surface, borderRadius: 18, padding: "1.25rem", width: "100%", maxWidth: 400, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -826,6 +831,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
+      {/* Payment Modal */}
       {showPay && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowPay(false)}>
           <div className="modal">
@@ -894,6 +900,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
+      {/* Receipt Modal + Print Area */}
       {receipt && (
         <>
           <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setReceipt(null)}>
@@ -940,6 +947,7 @@ export default function RestaurantJoglo() {
             </div>
           </div>
 
+          {/* Area Cetak Struk - hanya muncul saat print */}
           <div className="print-only">
             <div style={{ textAlign: "center" }}>
               <h2 style={{ margin: 0, fontSize: "20px" }}>Resto Joglo Alberthin</h2>
