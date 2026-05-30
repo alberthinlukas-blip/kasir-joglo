@@ -5,11 +5,13 @@ import { db } from "./firebase";
 
 const fmt = (n) => new Intl.NumberFormat("id-ID").format(n);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
-const fmtDate = (iso) =>
-  new Date(iso).toLocaleDateString("id-ID", {
+const fmtDate = (iso) => {
+  if (!iso) return "-";
+  return new Date(iso).toLocaleDateString("id-ID", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
+};
 
 const DB_USERS = {
   "Lucas": { password: "040900", role: "owner" },
@@ -125,8 +127,10 @@ export default function RestaurantJoglo() {
 
     const unsubTxns = onSnapshot(collection(db, "txns"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      data.sort((a, b) => new Date(b.date) - new Date(a.date));
-      setTxns(data);
+      // PENGAMANAN DATA: Pastikan date valid
+      const validData = data.filter(d => d && d.date);
+      validData.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setTxns(validData);
     });
 
     const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
@@ -195,7 +199,7 @@ export default function RestaurantJoglo() {
       await addDoc(collection(db, "txns"), tx);
 
       for (const cartItem of cart) {
-        const menuName = cartItem.name.toLowerCase();
+        const menuName = (cartItem.name || "").toLowerCase();
         let recipe = null;
         
         if (menuName.includes("nasi goreng")) {
@@ -222,10 +226,10 @@ export default function RestaurantJoglo() {
 
         if (recipe) {
           for (const ing of recipe) {
-            const stockTarget = stock.find(s => s.name.toLowerCase().includes(ing.stockKeyword));
+            const stockTarget = stock.find(s => (s.name || "").toLowerCase().includes(ing.stockKeyword));
             if (stockTarget) {
               const deduction = ing.qty * cartItem.qty;
-              const newQty = stockTarget.quantity - deduction;
+              const newQty = (stockTarget.quantity || 0) - deduction;
               await updateDoc(doc(db, "stock", stockTarget.id), {
                 quantity: Number(newQty.toFixed(2)) 
               });
@@ -305,40 +309,42 @@ export default function RestaurantJoglo() {
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
   };
 
-  // --- LOGIKA FILTER & REPORTING ---
-  const categories = ["Semua", ...new Set(menu.map((m) => m.category))];
+  // --- LOGIKA FILTER & REPORTING (DENGAN PENGAMANAN DATA) ---
+  const categories = ["Semua", ...new Set(menu.map((m) => m.category || "Umum"))];
   const filteredMenu = menu.filter((m) => {
-    const mc = catFilter === "Semua" || m.category === catFilter;
-    const mq = m.name.toLowerCase().includes(search.toLowerCase());
+    const mc = catFilter === "Semua" || (m.category || "Umum") === catFilter;
+    const mq = (m.name || "").toLowerCase().includes(search.toLowerCase());
     return mc && mq;
   });
 
-  // Pemrosesan Data Laporan Berdasarkan Filter Tanggal
   const filteredTxns = txns.filter(t => {
+    if (!t || !t.date) return false;
     if (repStart && new Date(t.date) < new Date(repStart + "T00:00:00")) return false;
     if (repEnd && new Date(t.date) > new Date(repEnd + "T23:59:59")) return false;
     return true;
   });
 
-  // Metrik Umum
-  const totalFilteredRev = filteredTxns.reduce((s, t) => s + t.total, 0);
+  const totalFilteredRev = filteredTxns.reduce((s, t) => s + (t.total || 0), 0);
   const avgFilteredTx = filteredTxns.length ? Math.round(totalFilteredRev / filteredTxns.length) : 0;
 
-  // 1. Rekap Pembayaran (Tutup Kasir)
   const breakdown = filteredTxns.reduce((acc, t) => {
-    acc[t.method] = (acc[t.method] || 0) + t.total;
+    const mthd = t.method || "Tunai";
+    acc[mthd] = (acc[mthd] || 0) + (t.total || 0);
     return acc;
   }, { Tunai: 0, QRIS: 0, Kartu: 0 });
 
-  // 2. Menu Terlaris
   const itemSales = {};
   filteredTxns.forEach(tx => {
-    tx.items.forEach(item => {
-      if(!itemSales[item.name]) itemSales[item.name] = { qty: 0, rev: 0, icon: item.icon };
-      itemSales[item.name].qty += item.qty;
-      itemSales[item.name].rev += (item.qty * item.price);
-    });
+    if (tx.items && Array.isArray(tx.items)) {
+      tx.items.forEach(item => {
+        const itemName = item.name || "Menu Tak Bernama";
+        if(!itemSales[itemName]) itemSales[itemName] = { qty: 0, rev: 0, icon: item.icon || "🍽️" };
+        itemSales[itemName].qty += (item.qty || 1);
+        itemSales[itemName].rev += ((item.qty || 1) * (item.price || 0));
+      });
+    }
   });
+
   const bestSellers = Object.entries(itemSales)
     .map(([name, data]) => ({ name, ...data }))
     .sort((a,b) => b.qty - a.qty)
@@ -347,26 +353,25 @@ export default function RestaurantJoglo() {
   const chartData = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
-    const dt = txns.filter((t) => new Date(t.date).toDateString() === d.toDateString());
+    const dt = txns.filter((t) => t.date && new Date(t.date).toDateString() === d.toDateString());
     return {
       hari: d.toLocaleDateString("id-ID", { weekday: "short", day: "numeric" }),
-      pendapatan: dt.reduce((s, t) => s + t.total, 0),
+      pendapatan: dt.reduce((s, t) => s + (t.total || 0), 0),
     };
   });
 
-  const lowStock = stock.filter((s) => s.quantity <= s.minQty);
+  const lowStock = stock.filter((s) => (s.quantity || 0) <= (s.minQty || 0));
 
-  // 3. Fungsi Download CSV
   const exportToCSV = () => {
     if (filteredTxns.length === 0) return alert("Belum ada transaksi di rentang tanggal ini.");
     const headers = ["Nomor Invoice", "Tanggal", "Rincian Pesanan", "Metode", "Kasir", "Total (Rp)"];
     const rows = filteredTxns.map(t => [
-      t.no,
-      new Date(t.date).toLocaleString('id-ID').replace(/,/g, ''),
-      t.items.map(i => `${i.name} (x${i.qty})`).join(" | "),
-      t.method,
+      t.no || "-",
+      t.date ? new Date(t.date).toLocaleString('id-ID').replace(/,/g, '') : "-",
+      Array.isArray(t.items) ? t.items.map(i => `${i.name || "Menu"} (x${i.qty || 1})`).join(" | ") : "-",
+      t.method || "Tunai",
       t.cashier || "System",
-      t.total
+      t.total || 0
     ]);
     const csvContent = "data:text/csv;charset=utf-8," 
       + headers.join(",") + "\n" 
@@ -497,7 +502,7 @@ export default function RestaurantJoglo() {
           )}
           {!isMobile && (
             <div style={{ color: "#C4956A", fontSize: ".75rem" }}>
-              {now.toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short" })}
+              {new Date().toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short" })}
             </div>
           )}
         </div>
@@ -607,7 +612,6 @@ export default function RestaurantJoglo() {
         {tab === "laporan" && authUser.role === "owner" && (
           <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
             
-            {/* Filter Panel */}
             <div className="card" style={{ padding: "1rem", background: C.surfaceAlt }}>
               <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: ".75rem", flexWrap: "wrap" }}>
@@ -626,7 +630,6 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* Metrik Cards */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: ".75rem" }}>
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💰</div>
@@ -635,7 +638,6 @@ export default function RestaurantJoglo() {
                 <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>{filteredTxns.length} transaksi</div>
               </div>
 
-              {/* Breakdown Pembayaran */}
               <div className="card" style={{ padding: "1.25rem", gridColumn: "span 2" }}>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".95rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Rekap Metode Pembayaran</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem" }}>
@@ -655,10 +657,8 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* Layout 2 Kolom untuk Chart & Best Seller */}
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1.2fr", gap: "1rem" }}>
               
-              {/* Grafik Penjualan */}
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: "1rem" }}>📈 Grafik Omzet 7 Hari Terakhir</div>
                 <ResponsiveContainer width="100%" height={220}>
@@ -672,7 +672,6 @@ export default function RestaurantJoglo() {
                 </ResponsiveContainer>
               </div>
 
-              {/* Best Sellers */}
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🏆 Top 5 Menu Terlaris</div>
                 {bestSellers.length === 0 ? (
@@ -696,7 +695,6 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* Riwayat Transaksi */}
             <div className="card" style={{ padding: "1.25rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Riwayat Transaksi (Sesuai Filter)</div>
               {filteredTxns.length === 0 ? (
@@ -710,12 +708,14 @@ export default function RestaurantJoglo() {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: ".8rem", color: C.text }}>{tx.no}</div>
                           <div style={{ fontSize: ".7rem", color: C.textLight }}>{fmtDate(tx.date)}</div>
-                          <div style={{ fontSize: ".68rem", color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tx.items.map((i) => i.name).join(", ")}</div>
+                          <div style={{ fontSize: ".68rem", color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {Array.isArray(tx.items) ? tx.items.map((i) => i.name).join(", ") : "Pesanan tidak diketahui"}
+                          </div>
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div style={{ fontWeight: 700, fontSize: ".88rem", color: C.accent }}>{fmtRp(tx.total)}</div>
                           <div style={{ display: "flex", justifyContent: "flex-end", gap: ".3rem", marginTop: ".2rem", alignItems: "center" }}>
-                             <span style={{ fontSize: ".62rem", background: mCol[0], color: mCol[1], borderRadius: 99, padding: "1px 7px" }}>{tx.method}</span>
+                             <span style={{ fontSize: ".62rem", background: mCol[0], color: mCol[1], borderRadius: 99, padding: "1px 7px" }}>{tx.method || "Tunai"}</span>
                              <span style={{ fontSize: ".62rem", color: C.primaryMid }}>Kasir: {tx.cashier || "-"}</span>
                           </div>
                         </div>
@@ -753,8 +753,8 @@ export default function RestaurantJoglo() {
 
             <div style={{ display: "grid", gap: ".55rem" }}>
               {stock.map((item) => {
-                const isLow = item.quantity <= item.minQty;
-                const pct = Math.min(100, Math.round((item.quantity / Math.max(item.minQty * 3, item.quantity)) * 100));
+                const isLow = (item.quantity || 0) <= (item.minQty || 0);
+                const pct = Math.min(100, Math.round(((item.quantity || 0) / Math.max((item.minQty || 1) * 3, (item.quantity || 1))) * 100));
                 return (
                   <div key={item.id} className="card" style={{ padding: ".85rem 1rem", border: `1px solid ${isLow ? "#F1948A" : C.borderLight}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
@@ -764,8 +764,8 @@ export default function RestaurantJoglo() {
                           {isLow && <span style={{ fontSize: ".62rem", background: C.redBg, color: C.red, borderRadius: 99, padding: "1px 7px" }}>⚠️ Menipis</span>}
                         </div>
                         <div style={{ display: "flex", gap: "1rem", marginTop: ".2rem", alignItems: "center" }}>
-                          <span style={{ fontSize: ".85rem", fontWeight: 700, color: isLow ? C.red : C.green }}>{item.quantity} {item.unit}</span>
-                          <span style={{ fontSize: ".7rem", color: C.textLight }}>Min: {item.minQty} {item.unit}</span>
+                          <span style={{ fontSize: ".85rem", fontWeight: 700, color: isLow ? C.red : C.green }}>{item.quantity || 0} {item.unit}</span>
+                          <span style={{ fontSize: ".7rem", color: C.textLight }}>Min: {item.minQty || 0} {item.unit}</span>
                         </div>
                         <div style={{ marginTop: ".45rem", height: 5, background: "#E8D5B7", borderRadius: 99, overflow: "hidden" }}>
                           <div style={{ height: "100%", width: `${pct}%`, background: isLow ? C.red : C.green, borderRadius: 99, transition: "width .3s" }} />
