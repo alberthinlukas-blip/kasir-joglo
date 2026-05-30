@@ -7,7 +7,6 @@ const fmt = (n) => new Intl.NumberFormat("id-ID").format(n);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
 const fmtDate = (iso) => {
   if (!iso) return "-";
-  // Cek apakah 'iso' memang sebuah string atau bisa dikonversi ke date
   try {
     const d = new Date(iso);
     return isNaN(d.getTime()) ? "Data rusak" : d.toLocaleDateString("id-ID", {
@@ -48,6 +47,22 @@ const INIT_STOCK = [
   { id: "s8", name: "Teh", unit: "pack", quantity: 10, minQty: 2 },
   { id: "s9", name: "Jahe", unit: "kg", quantity: 5, minQty: 1 }
 ];
+
+// ──🔥 FUNGSI RESEP GLOBAL (Untuk Sync Stok) 🔥──
+const getRecipe = (menuName) => {
+  const name = (menuName || "").toLowerCase();
+  if (name.includes("nasi goreng")) return [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
+  if (name.includes("magelangan")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "mie", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+  if (name.includes("rendang")) return [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "daging sapi", qty: 0.2 }];
+  if (name.includes("ayam")) return [{ stockKeyword: "ayam", qty: 1 }];
+  if (name.includes("soto")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "ayam", qty: 0.5 }];
+  if (name.includes("rawon")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "daging sapi", qty: 0.15 }];
+  if (name.includes("burger")) return [{ stockKeyword: "roti", qty: 1 }, { stockKeyword: "daging sapi", qty: 0.1 }];
+  if (name.includes("mendoan")) return [{ stockKeyword: "tempe", qty: 0.5 }];
+  if (name.includes("teh")) return [{ stockKeyword: "teh", qty: 0.05 }];
+  if (name.includes("jahe")) return [{ stockKeyword: "jahe", qty: 0.1 }];
+  return [];
+};
 
 const C = {
   bg: "#F7EDD8", surface: "#FFFDF5", surfaceAlt: "#FFF8EC", border: "#E0C89A", borderLight: "#EDD9AC",
@@ -112,14 +127,14 @@ export default function RestaurantJoglo() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 680);
   const [confirmDel, setConfirmDel] = useState(null);
 
-  // Filter Tanggal Laporan
+  // Filter Tanggal
   const [repStart, setRepStart] = useState("");
   const [repEnd, setRepEnd] = useState("");
 
-  // ── State baru: edit & hapus transaksi individual ──
-  const [txnEditModal, setTxnEditModal] = useState(null); // null | 'edit'
+  // Edit & Hapus Transaksi
+  const [txnEditModal, setTxnEditModal] = useState(null);
   const [txnForm, setTxnForm] = useState({});
-  const [confirmDelTxn, setConfirmDelTxn] = useState(null); // null | { id, no }
+  const [confirmDelTxn, setConfirmDelTxn] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const NAV_TABS = [
@@ -175,7 +190,7 @@ export default function RestaurantJoglo() {
     }
   };
 
-  const doLogout = () => { if (window.confirm("Yakin ingin logout dari mesin kasir?")) setAuthUser(null); };
+  const doLogout = () => { if (window.confirm("Yakin ingin logout?")) setAuthUser(null); };
 
   const addToCart = useCallback((item) => {
     setCart((p) => {
@@ -194,6 +209,42 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
+  // ──🔥 FUNGSI AJAIB: MENGHITUNG DAN MENYESUAIKAN STOK OTOMATIS 🔥──
+  const applyStockDiff = async (oldItems, newItems) => {
+    const stockChanges = {}; 
+    
+    const aggregate = (items, isRevert) => {
+      for (const item of items) {
+        const recipe = getRecipe(item.name);
+        for (const ing of recipe) {
+          // Cari stok di state lokal berdasarkan keyword
+          const stockTarget = stock.find(s => (s.name || "").toLowerCase().includes(ing.stockKeyword));
+          if (stockTarget) {
+            const change = ing.qty * (item.qty || 1);
+            if (!stockChanges[stockTarget.id]) {
+              stockChanges[stockTarget.id] = { docId: stockTarget.id, current: stockTarget.quantity, diff: 0 };
+            }
+            // Kalau revert (hapus/edit hapus) = ditambah (+), kalau apply baru = dikurangi (-)
+            stockChanges[stockTarget.id].diff += (isRevert ? change : -change);
+          }
+        }
+      }
+    };
+
+    if (oldItems) aggregate(oldItems, true);  // Kembalikan stok lama
+    if (newItems) aggregate(newItems, false); // Potong stok baru
+
+    const batch = writeBatch(db);
+    for (const key in stockChanges) {
+      const s = stockChanges[key];
+      if (s.diff !== 0) {
+        const newQty = Number((s.current + s.diff).toFixed(2));
+        batch.update(doc(db, "stock", s.docId), { quantity: newQty });
+      }
+    }
+    await batch.commit();
+  };
+
   const doPayment = async () => {
     if (!cart.length) return;
     const tx = {
@@ -208,47 +259,10 @@ export default function RestaurantJoglo() {
     };
 
     try {
+      // 1. Simpan Transaksi
       await addDoc(collection(db, "txns"), tx);
-
-      for (const cartItem of cart) {
-        const menuName = (cartItem.name || "").toLowerCase();
-        let recipe = null;
-
-        if (menuName.includes("nasi goreng")) {
-          recipe = [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
-        } else if (menuName.includes("magelangan")) {
-          recipe = [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "mie", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
-        } else if (menuName.includes("rendang")) {
-          recipe = [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "daging sapi", qty: 0.2 }];
-        } else if (menuName.includes("ayam")) {
-          recipe = [{ stockKeyword: "ayam", qty: 1 }];
-        } else if (menuName.includes("soto")) {
-          recipe = [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "ayam", qty: 0.5 }];
-        } else if (menuName.includes("rawon")) {
-          recipe = [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "daging sapi", qty: 0.15 }];
-        } else if (menuName.includes("burger")) {
-          recipe = [{ stockKeyword: "roti", qty: 1 }, { stockKeyword: "daging sapi", qty: 0.1 }];
-        } else if (menuName.includes("mendoan")) {
-          recipe = [{ stockKeyword: "tempe", qty: 0.5 }];
-        } else if (menuName.includes("teh")) {
-          recipe = [{ stockKeyword: "teh", qty: 0.05 }];
-        } else if (menuName.includes("jahe")) {
-          recipe = [{ stockKeyword: "jahe", qty: 0.1 }];
-        }
-
-        if (recipe) {
-          for (const ing of recipe) {
-            const stockTarget = stock.find(s => (s.name || "").toLowerCase().includes(ing.stockKeyword));
-            if (stockTarget) {
-              const deduction = ing.qty * cartItem.qty;
-              const newQty = (stockTarget.quantity || 0) - deduction;
-              await updateDoc(doc(db, "stock", stockTarget.id), {
-                quantity: Number(newQty.toFixed(2))
-              });
-            }
-          }
-        }
-      }
+      // 2. Potong Stok (oldItems = null, newItems = cart)
+      await applyStockDiff(null, cart);
 
       setReceipt(tx);
       setCart([]);
@@ -284,18 +298,15 @@ export default function RestaurantJoglo() {
     }
   };
 
-  // ✅ FIX: Pakai writeBatch agar tidak kena rate-limit Firebase saat hapus banyak dokumen.
-  //    Reset sekarang menghapus sesuai filter tanggal aktif — kalau tidak ada filter, hapus semua.
   const resetTransactions = async () => {
     const scope = (repStart || repEnd) ? "transaksi sesuai filter tanggal" : "SEMUA riwayat transaksi";
-    if (!window.confirm(`⚠️ PERINGATAN: Yakin mau menghapus ${scope}? Data ini TIDAK BISA dikembalikan!`)) return;
+    if (!window.confirm(`⚠️ PERINGATAN: Yakin mau menghapus ${scope}? (Perhatian: Ini TIDAK akan mengembalikan stok bahan). Lanjutkan?`)) return;
 
     setIsDeleting(true);
     try {
-      const toDelete = filteredTxns; // ← respek filter; kalau kosong filter = semua txns
+      const toDelete = filteredTxns; 
       if (toDelete.length === 0) { alert("Tidak ada transaksi yang perlu dihapus."); setIsDeleting(false); return; }
 
-      // Firestore batch max 500 ops — pecah jadi chunks
       const CHUNK = 500;
       for (let i = 0; i < toDelete.length; i += CHUNK) {
         const chunk = toDelete.slice(i, i + CHUNK);
@@ -312,6 +323,86 @@ export default function RestaurantJoglo() {
     }
   };
 
+  // ── EDIT TRANSAKSI (DENGAN SINKRONISASI STOK) ──
+  const openTxnEdit = (tx) => {
+    setTxnForm({
+      id: tx.id,
+      no: tx.no,
+      date: tx.date,
+      originalItems: JSON.parse(JSON.stringify(tx.items)), // Simpan riwayat pesanan awal untuk selisih
+      items: JSON.parse(JSON.stringify(tx.items)),
+      total: tx.total,
+      method: tx.method || "Tunai",
+      cash: tx.cash || tx.total,
+      change: tx.change || 0,
+      cashier: tx.cashier || "-",
+    });
+    setTxnEditModal("edit");
+  };
+
+  const saveTxnEdit = async () => {
+    if (!txnForm.id) return alert("Error: ID tidak valid");
+    const updatedTotal = txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0);
+    const updatedChange = txnForm.method === "Tunai" ? Number(txnForm.cash) - updatedTotal : 0;
+    
+    try {
+      // 1. Sinkronisasi Stok (Kembalikan stok lama, lalu potong dengan yang baru)
+      await applyStockDiff(txnForm.originalItems, txnForm.items);
+
+      // 2. Update Database Transaksi
+      const docRef = doc(db, "txns", txnForm.id);
+      await updateDoc(docRef, {
+        method: txnForm.method,
+        cash: txnForm.method === "Tunai" ? Number(txnForm.cash) : updatedTotal,
+        change: updatedChange,
+        total: updatedTotal,
+        items: txnForm.items,
+      });
+      setTxnEditModal(null);
+    } catch (e) { 
+      console.error(e);
+      alert("Gagal update transaksi & stok."); 
+    }
+  };
+
+  // ── HAPUS 1 TRANSAKSI (DENGAN PENGEMBALIAN STOK) ──
+  const confirmDeleteTxn = (tx) => setConfirmDelTxn(tx);
+
+  const doDeleteTxn = async () => {
+    if (!confirmDelTxn?.id) return;
+    try {
+      // 1. Kembalikan stok (revert oldItems = tx.items, newItems = null)
+      await applyStockDiff(confirmDelTxn.items, null);
+      
+      // 2. Hapus Transaksi
+      const docRef = doc(db, "txns", confirmDelTxn.id);
+      await deleteDoc(docRef);
+      
+      setConfirmDelTxn(null);
+    } catch (e) { 
+      console.error(e);
+      alert("Gagal hapus transaksi."); 
+    }
+  };
+
+  const txnItemDec = (idx) => {
+    setTxnForm(p => {
+      const items = [...p.items];
+      if (items[idx].qty <= 1) items.splice(idx, 1);
+      else items[idx] = { ...items[idx], qty: items[idx].qty - 1 };
+      return { ...p, items };
+    });
+  };
+
+  const txnItemInc = (idx) => {
+    setTxnForm(p => {
+      const items = [...p.items];
+      items[idx] = { ...items[idx], qty: items[idx].qty + 1 };
+      return { ...p, items };
+    });
+  };
+
+  // ── Manajemen Menu & Stok Asli ──
   const openMenuEdit = (item) => {
     setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
     setMenuModal(item ? "edit" : "new");
@@ -347,65 +438,6 @@ export default function RestaurantJoglo() {
       await deleteDoc(doc(db, type, id));
       setConfirmDel(null);
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
-  };
-
-  // ── Fungsi edit & hapus transaksi individual ──
-  const openTxnEdit = (tx) => {
-    setTxnForm({
-      id: tx.id,
-      no: tx.no,
-      date: tx.date,
-      items: tx.items,
-      total: tx.total,
-      method: tx.method || "Tunai",
-      cash: tx.cash || tx.total,
-      change: tx.change || 0,
-      cashier: tx.cashier || "-",
-    });
-    setTxnEditModal("edit");
-  };
-
-  const saveTxnEdit = async () => {
-    const updatedTotal = txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0);
-    const updatedChange = txnForm.method === "Tunai" ? Number(txnForm.cash) - updatedTotal : 0;
-    try {
-      await updateDoc(doc(db, "txns", txnForm.id), {
-        method: txnForm.method,
-        cash: txnForm.method === "Tunai" ? Number(txnForm.cash) : updatedTotal,
-        change: updatedChange,
-        total: updatedTotal,
-        items: txnForm.items,
-      });
-      setTxnEditModal(null);
-    } catch (e) { alert("Gagal menyimpan perubahan transaksi!"); }
-  };
-
-  const confirmDeleteTxn = (tx) => setConfirmDelTxn({ id: tx.id, no: tx.no });
-
-  const doDeleteTxn = async () => {
-    if (!confirmDelTxn) return;
-    try {
-      await deleteDoc(doc(db, "txns", confirmDelTxn.id));
-      setConfirmDelTxn(null);
-    } catch (e) { alert("Gagal menghapus transaksi dari Cloud!"); }
-  };
-
-  // ── Logika qty item di dalam modal edit transaksi ──
-  const txnItemDec = (idx) => {
-    setTxnForm(p => {
-      const items = [...p.items];
-      if (items[idx].qty <= 1) items.splice(idx, 1);
-      else items[idx] = { ...items[idx], qty: items[idx].qty - 1 };
-      return { ...p, items };
-    });
-  };
-
-  const txnItemInc = (idx) => {
-    setTxnForm(p => {
-      const items = [...p.items];
-      items[idx] = { ...items[idx], qty: items[idx].qty + 1 };
-      return { ...p, items };
-    });
   };
 
   // --- LOGIKA FILTER & REPORTING ---
@@ -484,7 +516,6 @@ export default function RestaurantJoglo() {
     document.body.removeChild(link);
   };
 
-  // Hitung total dari txnForm.items (untuk modal edit transaksi)
   const txnFormTotal = txnForm.items ? txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0) : 0;
   const txnFormChange = txnForm.method === "Tunai" ? Number(txnForm.cash || 0) - txnFormTotal : 0;
 
@@ -926,7 +957,7 @@ export default function RestaurantJoglo() {
       </main>
 
       {/* ═══════════════════════════════════════
-          MODALS & POP-UPS
+         MODALS & POP-UPS
       ═══════════════════════════════════════ */}
 
       {/* Mobile Cart */}
@@ -1119,7 +1150,6 @@ export default function RestaurantJoglo() {
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: ".2rem" }}>✏️ Edit Transaksi</div>
             <div style={{ fontSize: ".72rem", color: C.textMuted, marginBottom: "1rem" }}>{txnForm.no} · {fmtDate(txnForm.date)} · Kasir: {txnForm.cashier}</div>
 
-            {/* Item list — bisa +/- qty atau hapus item */}
             <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Rincian Item</div>
             <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".6rem", marginBottom: "1rem", display: "flex", flexDirection: "column", gap: ".35rem" }}>
               {txnForm.items && txnForm.items.length > 0 ? txnForm.items.map((item, idx) => (
@@ -1144,7 +1174,6 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* Ganti metode bayar */}
             <div style={{ marginBottom: "1rem" }}>
               <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Metode Pembayaran</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: ".4rem" }}>
@@ -1187,12 +1216,12 @@ export default function RestaurantJoglo() {
             <div style={{ fontSize: "2rem", marginBottom: ".5rem" }}>🗑️</div>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1rem", color: C.primary, marginBottom: ".5rem" }}>Hapus transaksi ini?</div>
             <div style={{ fontSize: ".85rem", color: C.textMid, marginBottom: "1.25rem" }}>
-              <strong>{confirmDelTxn.no}</strong> akan dihapus permanen dari laporan.
+              <strong>{confirmDelTxn.no}</strong> akan dihapus permanen dan stok akan dikembalikan secara otomatis.
             </div>
             <div style={{ display: "flex", gap: ".5rem" }}>
               <button className="btn" onClick={() => setConfirmDelTxn(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
               <button className="btn" onClick={doDeleteTxn}
-                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus</button>
+                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus & Kembalikan Stok</button>
             </div>
           </div>
         </div>
