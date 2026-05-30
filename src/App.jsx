@@ -114,12 +114,17 @@ export default function RestaurantJoglo() {
   const [cart, setCart] = useState([]);
   const [catFilter, setCatFilter] = useState("Semua");
   const [search, setSearch] = useState("");
+  
+  // States Modal Pembayaran & Tipe Pesanan
   const [showPay, setShowPay] = useState(false);
   const [payMethod, setPayMethod] = useState("Tunai");
   const [cashIn, setCashIn] = useState("");
+  const [orderType, setOrderType] = useState("Dine-in");
+  const [orderNote, setOrderNote] = useState("");
+
   const [receipt, setReceipt] = useState(null);
   const [showCart, setShowCart] = useState(false);
-  const [showHistory, setShowHistory] = useState(false); // State baru untuk modal Riwayat Kasir
+  const [showHistory, setShowHistory] = useState(false);
   const [menuModal, setMenuModal] = useState(null);
   const [stockModal, setStockModal] = useState(null);
   const [menuForm, setMenuForm] = useState({});
@@ -209,7 +214,6 @@ export default function RestaurantJoglo() {
 
   const applyStockDiff = async (oldItems, newItems) => {
     const stockChanges = {}; 
-    
     const aggregate = (items, isRevert) => {
       for (const item of items) {
         const recipe = getRecipe(item.name);
@@ -225,10 +229,8 @@ export default function RestaurantJoglo() {
         }
       }
     };
-
     if (oldItems) aggregate(oldItems, true); 
     if (newItems) aggregate(newItems, false);
-
     const batch = writeBatch(db);
     for (const key in stockChanges) {
       const s = stockChanges[key];
@@ -251,6 +253,8 @@ export default function RestaurantJoglo() {
       cash: payMethod === "Tunai" ? Number(cashIn) : cartTotal,
       change: payMethod === "Tunai" ? Number(cashIn) - cartTotal : 0,
       cashier: authUser.username,
+      orderType: orderType, // Dine-in, Takeaway, Online
+      orderNote: orderNote  // Nomor meja / Info pelanggan
     };
 
     try {
@@ -262,6 +266,8 @@ export default function RestaurantJoglo() {
       setShowPay(false);
       setShowCart(false);
       setCashIn("");
+      setOrderNote(""); // Reset untuk transaksi berikutnya
+      setOrderType("Dine-in");
     } catch (e) {
       alert("Gagal memproses pembayaran. Pastikan internet aktif!");
       console.error(e);
@@ -276,7 +282,7 @@ export default function RestaurantJoglo() {
     window.print();
   };
 
-  const payOk = payMethod !== "Tunai" || Number(cashIn) >= cartTotal;
+  const payOk = (payMethod !== "Tunai" || Number(cashIn) >= cartTotal) && (orderType !== "Dine-in" || orderNote.trim() !== "");
 
   const resetDatabase = async () => {
     if (!window.confirm("Beneran mau hapus semua Menu & Stok lama dan ganti dengan data khusus Resto Joglo?")) return;
@@ -328,6 +334,8 @@ export default function RestaurantJoglo() {
       cash: tx.cash || tx.total,
       change: tx.change || 0,
       cashier: tx.cashier || "-",
+      orderType: tx.orderType || "Dine-in",
+      orderNote: tx.orderNote || "",
     });
     setTxnEditModal("edit");
   };
@@ -346,6 +354,8 @@ export default function RestaurantJoglo() {
         change: updatedChange,
         total: updatedTotal,
         items: txnForm.items,
+        orderType: txnForm.orderType,
+        orderNote: txnForm.orderNote
       });
       setTxnEditModal(null);
     } catch (e) { 
@@ -478,10 +488,12 @@ export default function RestaurantJoglo() {
   const escapeCSV = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const exportToCSV = () => {
     if (filteredTxns.length === 0) return alert("Belum ada transaksi di rentang tanggal ini.");
-    const headers = ["Nomor Invoice", "Tanggal", "Rincian Pesanan", "Metode", "Kasir", "Total (Rp)"];
+    const headers = ["Nomor Invoice", "Tanggal", "Tipe Pesanan", "Catatan/Meja", "Rincian Pesanan", "Metode", "Kasir", "Total (Rp)"];
     const rows = filteredTxns.map(t => [
       escapeCSV(t.no || "-"),
       escapeCSV(t.date ? new Date(t.date).toLocaleString("id-ID") : "-"),
+      escapeCSV(t.orderType || "Dine-in"),
+      escapeCSV(t.orderNote || "-"),
       escapeCSV(Array.isArray(t.items) ? t.items.map(i => `${i.name || "Menu"} (x${i.qty || 1})`).join(" | ") : "-"),
       escapeCSV(t.method || "Tunai"),
       escapeCSV(t.cashier || "System"),
@@ -644,7 +656,6 @@ export default function RestaurantJoglo() {
                 <input className="inp" placeholder="🔍 Cari menu…" value={search} onChange={(e) => setSearch(e.target.value)}
                   style={{ flex: 1, minWidth: 140, maxWidth: 240 }} />
                 
-                {/* ── TOMBOL RIWAYAT UNTUK KASIR ── */}
                 <button className="btn" onClick={() => setShowHistory(true)}
                   style={{ padding: ".4rem .8rem", background: "white", border: `1.5px solid ${C.border}`, borderRadius: 9, fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "flex", alignItems: "center", gap: ".4rem" }}>
                   🕒 Riwayat Transaksi
@@ -845,9 +856,14 @@ export default function RestaurantJoglo() {
                     return (
                       <div key={tx.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".55rem .7rem", background: C.surfaceAlt, borderRadius: 9 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, fontSize: ".8rem", color: C.text }}>{tx.no}</div>
-                          <div style={{ fontSize: ".7rem", color: C.textLight }}>{fmtDate(tx.date)}</div>
-                          <div style={{ fontSize: ".68rem", color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: ".4rem" }}>
+                            <span style={{ fontWeight: 600, fontSize: ".8rem", color: C.text }}>{tx.no}</span>
+                            <span style={{ fontSize: ".6rem", background: "#E8D5B7", color: C.primaryMid, padding: "1px 6px", borderRadius: 4 }}>{tx.orderType}</span>
+                          </div>
+                          <div style={{ fontSize: ".7rem", color: C.textLight, marginTop: ".1rem" }}>
+                            {fmtDate(tx.date)} {tx.orderNote && `• ${tx.orderNote}`}
+                          </div>
+                          <div style={{ fontSize: ".68rem", color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: ".2rem" }}>
                             {Array.isArray(tx.items) ? tx.items.map((i) => i.name).join(", ") : "Pesanan tidak diketahui"}
                           </div>
                         </div>
@@ -964,11 +980,30 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* Payment Modal */}
+      {/* ── Modal Pembayaran dengan Fitur Nomor Meja ── */}
       {showPay && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowPay(false)}>
-          <div className="modal">
-            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", color: C.primary, marginBottom: "1rem" }}>💳 Pembayaran</div>
+          <div className="modal" style={{ maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", color: C.primary, marginBottom: "1rem" }}>💳 Pembayaran & Detail</div>
+
+            <div style={{ marginBottom: "1rem" }}>
+              <div style={{ fontSize: ".8rem", color: C.primaryMid, marginBottom: ".45rem", fontWeight: 600 }}>Tipe Pesanan</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: ".4rem", marginBottom: ".5rem" }}>
+                {[["Dine-in", "🍽️"], ["Takeaway", "🛍️"], ["Online", "🛵"]].map(([type, icon]) => (
+                  <button key={type} className="btn" onClick={() => { setOrderType(type); setOrderNote(""); }}
+                    style={{ padding: ".55rem .2rem", border: `2px solid ${orderType === type ? C.accent : C.border}`, borderRadius: 9, background: orderType === type ? "#FFF3DC" : "white", color: orderType === type ? C.accent : C.primaryMid, fontSize: ".75rem", fontWeight: orderType === type ? 600 : 400, display: "flex", flexDirection: "column", alignItems: "center", gap: ".2rem" }}>
+                    <span style={{ fontSize: "1.2rem" }}>{icon}</span> {type}
+                  </button>
+                ))}
+              </div>
+              
+              <input className="inp" required
+                placeholder={orderType === "Dine-in" ? "Nomor Meja (Contoh: 12)" : orderType === "Takeaway" ? "Nama Pelanggan (Contoh: Budi)" : "No. Pesanan / Nama Driver"} 
+                value={orderNote} onChange={(e) => setOrderNote(e.target.value)} 
+                style={{ border: (!orderNote && orderType !== "Dine-in") ? `1.5px solid ${C.red}` : `1.5px solid ${C.border}` }}
+              />
+              {orderType !== "Dine-in" && !orderNote && <div style={{ fontSize: ".65rem", color: C.red, marginTop: ".2rem" }}>*Keterangan ini wajib diisi</div>}
+            </div>
 
             <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", fontSize: ".8rem" }}>
               {cart.map((c) => (
@@ -1040,7 +1075,12 @@ export default function RestaurantJoglo() {
             <div className="modal" style={{ textAlign: "center" }}>
               <div style={{ fontSize: "2.5rem", marginBottom: ".5rem" }}>🧾</div>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.15rem", color: C.green, marginBottom: ".25rem" }}>Struk Transaksi</div>
-              <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: "1rem" }}>{receipt.no} · {fmtDate(receipt.date)}</div>
+              <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: ".4rem" }}>{receipt.no} · {fmtDate(receipt.date)}</div>
+              
+              <div style={{ display: "inline-block", background: "#E8D5B7", color: C.primaryMid, padding: ".3rem .8rem", borderRadius: 99, fontSize: ".75rem", fontWeight: 600, marginBottom: "1rem" }}>
+                {receipt.orderType === "Dine-in" ? "🍽️ Makan di Tempat" : receipt.orderType === "Takeaway" ? "🛍️ Bungkus" : "🛵 Online"} 
+                {receipt.orderNote && ` • ${receipt.orderNote}`}
+              </div>
 
               <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", textAlign: "left" }}>
                 {receipt.items.map((c) => (
@@ -1089,7 +1129,8 @@ export default function RestaurantJoglo() {
             <p style={{ margin: 0 }}>
               Waktu: {fmtDate(receipt.date)}<br />
               No. Inv: {receipt.no}<br />
-              Kasir: {authUser.username}
+              Kasir: {authUser.username}<br/>
+              <strong>Tipe: {receipt.orderType} {receipt.orderNote && `(${receipt.orderNote})`}</strong>
             </p>
             <div className="garis-putus"></div>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1140,6 +1181,21 @@ export default function RestaurantJoglo() {
           <div className="modal" style={{ maxWidth: 460, maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: ".2rem" }}>✏️ Edit Transaksi</div>
             <div style={{ fontSize: ".72rem", color: C.textMuted, marginBottom: "1rem" }}>{txnForm.no} · {fmtDate(txnForm.date)} · Kasir: {txnForm.cashier}</div>
+            
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: ".5rem", marginBottom: "1rem" }}>
+               <div>
+                  <label style={{ fontSize: ".72rem", color: C.primaryMid, fontWeight: 600 }}>Tipe Pesanan</label>
+                  <select className="inp" value={txnForm.orderType || "Dine-in"} onChange={(e) => setTxnForm(p => ({ ...p, orderType: e.target.value }))} style={{ padding: ".4rem" }}>
+                     <option value="Dine-in">Dine-in</option>
+                     <option value="Takeaway">Takeaway</option>
+                     <option value="Online">Online</option>
+                  </select>
+               </div>
+               <div>
+                  <label style={{ fontSize: ".72rem", color: C.primaryMid, fontWeight: 600 }}>Keterangan / Meja</label>
+                  <input className="inp" value={txnForm.orderNote || ""} onChange={(e) => setTxnForm(p => ({ ...p, orderNote: e.target.value }))} style={{ padding: ".4rem" }} />
+               </div>
+            </div>
 
             <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Rincian Item</div>
             <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".6rem", marginBottom: "1rem", display: "flex", flexDirection: "column", gap: ".35rem" }}>
@@ -1322,8 +1378,13 @@ export default function RestaurantJoglo() {
               {txns.slice(0, 20).map(tx => (
                 <div key={tx.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: ".6rem .75rem", background: C.surfaceAlt, borderRadius: 9, border: `1px solid ${C.borderLight}` }}>
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: ".85rem", color: C.text }}>{tx.no}</div>
-                    <div style={{ fontSize: ".7rem", color: C.textLight }}>{fmtDate(tx.date)}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: ".4rem" }}>
+                      <span style={{ fontWeight: 600, fontSize: ".85rem", color: C.text }}>{tx.no}</span>
+                      <span style={{ fontSize: ".6rem", background: "#E8D5B7", color: C.primaryMid, padding: "1px 6px", borderRadius: 4 }}>{tx.orderType || "Dine-in"}</span>
+                    </div>
+                    <div style={{ fontSize: ".7rem", color: C.textLight, marginTop: ".1rem" }}>
+                      {fmtDate(tx.date)} {tx.orderNote && `• ${tx.orderNote}`}
+                    </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
                     <div style={{ textAlign: "right" }}>
