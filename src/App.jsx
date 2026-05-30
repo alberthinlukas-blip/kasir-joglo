@@ -16,7 +16,6 @@ const DB_USERS = {
   "Budi": { password: "123456", role: "karyawan" }
 };
 
-// --- DATA MENU & STOK JOGLO LENGKAP ---
 const INIT_MENU = [
   { id: "m1", name: "Nasi Goreng Joglo", category: "Utama", price: 35000, icon: "🍳" },
   { id: "m2", name: "Magelangan Spesial", category: "Utama", price: 30000, icon: "🍜" },
@@ -104,6 +103,10 @@ export default function RestaurantJoglo() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 680);
   const [confirmDel, setConfirmDel] = useState(null);
 
+  // Filter Tanggal Laporan
+  const [repStart, setRepStart] = useState("");
+  const [repEnd, setRepEnd] = useState("");
+
   const NAV_TABS = [
     { key: "kasir", icon: "🧾", label: "Kasir", roles: ["owner", "karyawan"] },
     { key: "menu", icon: "📋", label: "Menu", roles: ["owner"] },
@@ -175,7 +178,6 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
-  // --- 🔥 RESEP OTOMATIS SUPER LENGKAP 🔥 ---
   const doPayment = async () => {
     if (!cart.length) return;
     const tx = {
@@ -196,7 +198,6 @@ export default function RestaurantJoglo() {
         const menuName = cartItem.name.toLowerCase();
         let recipe = null;
         
-        // Pemetaan Resep berdasarkan Kata Kunci Menu
         if (menuName.includes("nasi goreng")) {
           recipe = [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
         } else if (menuName.includes("magelangan")) {
@@ -254,18 +255,13 @@ export default function RestaurantJoglo() {
 
   const payOk = payMethod !== "Tunai" || Number(cashIn) >= cartTotal;
 
-  // --- 🔥 TOMBOL SAKTI UNTUK RESET DATA LAMA 🔥 ---
   const resetDatabase = async () => {
     if (!window.confirm("Beneran mau hapus semua Menu & Stok lama dan ganti dengan data khusus Resto Joglo?")) return;
     try {
-      // Hapus yang lama
       for (const m of menu) await deleteDoc(doc(db, "menu", m.id));
       for (const s of stock) await deleteDoc(doc(db, "stock", s.id));
-      
-      // Masukkan yang baru
       for (const m of INIT_MENU) await addDoc(collection(db, "menu"), { name: m.name, category: m.category, price: m.price, icon: m.icon });
       for (const s of INIT_STOCK) await addDoc(collection(db, "stock"), { name: s.name, unit: s.unit, quantity: s.quantity, minQty: s.minQty });
-      
       alert("Selesai! Database berhasil di-reset. Menu dan Stok Joglo sudah aktif.");
     } catch (e) {
       alert("Gagal mereset database. Cek koneksi internet.");
@@ -279,12 +275,7 @@ export default function RestaurantJoglo() {
 
   const saveMenu = async () => {
     if (!menuForm.name || !menuForm.price) return;
-    const itemData = { 
-      name: menuForm.name, 
-      category: menuForm.category || "Umum", 
-      price: Number(menuForm.price), 
-      icon: menuForm.icon || "🍽️" 
-    };
+    const itemData = { name: menuForm.name, category: menuForm.category || "Umum", price: Number(menuForm.price), icon: menuForm.icon || "🍽️" };
     try {
       if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
       else await updateDoc(doc(db, "menu", menuForm.id), itemData);
@@ -299,12 +290,7 @@ export default function RestaurantJoglo() {
 
   const saveStock = async () => {
     if (!stockForm.name) return;
-    const itemData = {
-      name: stockForm.name,
-      unit: stockForm.unit || "pcs",
-      quantity: Number(stockForm.quantity),
-      minQty: Number(stockForm.minQty)
-    };
+    const itemData = { name: stockForm.name, unit: stockForm.unit || "pcs", quantity: Number(stockForm.quantity), minQty: Number(stockForm.minQty) };
     try {
       if (stockModal === "new") await addDoc(collection(db, "stock"), itemData);
       else await updateDoc(doc(db, "stock", stockForm.id), itemData);
@@ -319,6 +305,7 @@ export default function RestaurantJoglo() {
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
   };
 
+  // --- LOGIKA FILTER & REPORTING ---
   const categories = ["Semua", ...new Set(menu.map((m) => m.category))];
   const filteredMenu = menu.filter((m) => {
     const mc = catFilter === "Semua" || m.category === catFilter;
@@ -326,16 +313,36 @@ export default function RestaurantJoglo() {
     return mc && mq;
   });
 
-  const now = new Date();
-  const todayStr = now.toDateString();
-  const todayTx = txns.filter((t) => new Date(t.date).toDateString() === todayStr);
-  const todayRev = todayTx.reduce((s, t) => s + t.total, 0);
-  const monthTx = txns.filter((t) => {
-    const d = new Date(t.date);
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  // Pemrosesan Data Laporan Berdasarkan Filter Tanggal
+  const filteredTxns = txns.filter(t => {
+    if (repStart && new Date(t.date) < new Date(repStart + "T00:00:00")) return false;
+    if (repEnd && new Date(t.date) > new Date(repEnd + "T23:59:59")) return false;
+    return true;
   });
-  const monthRev = monthTx.reduce((s, t) => s + t.total, 0);
-  const avgTx = monthTx.length ? Math.round(monthRev / monthTx.length) : 0;
+
+  // Metrik Umum
+  const totalFilteredRev = filteredTxns.reduce((s, t) => s + t.total, 0);
+  const avgFilteredTx = filteredTxns.length ? Math.round(totalFilteredRev / filteredTxns.length) : 0;
+
+  // 1. Rekap Pembayaran (Tutup Kasir)
+  const breakdown = filteredTxns.reduce((acc, t) => {
+    acc[t.method] = (acc[t.method] || 0) + t.total;
+    return acc;
+  }, { Tunai: 0, QRIS: 0, Kartu: 0 });
+
+  // 2. Menu Terlaris
+  const itemSales = {};
+  filteredTxns.forEach(tx => {
+    tx.items.forEach(item => {
+      if(!itemSales[item.name]) itemSales[item.name] = { qty: 0, rev: 0, icon: item.icon };
+      itemSales[item.name].qty += item.qty;
+      itemSales[item.name].rev += (item.qty * item.price);
+    });
+  });
+  const bestSellers = Object.entries(itemSales)
+    .map(([name, data]) => ({ name, ...data }))
+    .sort((a,b) => b.qty - a.qty)
+    .slice(0, 5);
 
   const chartData = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
@@ -348,6 +355,30 @@ export default function RestaurantJoglo() {
   });
 
   const lowStock = stock.filter((s) => s.quantity <= s.minQty);
+
+  // 3. Fungsi Download CSV
+  const exportToCSV = () => {
+    if (filteredTxns.length === 0) return alert("Belum ada transaksi di rentang tanggal ini.");
+    const headers = ["Nomor Invoice", "Tanggal", "Rincian Pesanan", "Metode", "Kasir", "Total (Rp)"];
+    const rows = filteredTxns.map(t => [
+      t.no,
+      new Date(t.date).toLocaleString('id-ID').replace(/,/g, ''),
+      t.items.map(i => `${i.name} (x${i.qty})`).join(" | "),
+      t.method,
+      t.cashier || "System",
+      t.total
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + headers.join(",") + "\n" 
+      + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Laporan_Penjualan_Joglo.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const CartPanel = ({ asModal = false }) => (
     <div className={asModal ? "" : "card"} style={{
@@ -485,6 +516,7 @@ export default function RestaurantJoglo() {
 
       <main style={{ padding: "1rem", maxWidth: 1200, margin: "0 auto" }}>
         
+        {/* TAB KASIR */}
         {tab === "kasir" && (
           <div className="no-print" style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 310px", gap: "1rem", alignItems: "start" }}>
             <div>
@@ -517,11 +549,6 @@ export default function RestaurantJoglo() {
                     </div>
                   );
                 })}
-                {filteredMenu.length === 0 && (
-                  <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "2.5rem", color: C.textMuted, fontSize: ".88rem" }}>
-                    Tidak ada menu yang sesuai
-                  </div>
-                )}
               </div>
             </div>
 
@@ -537,12 +564,12 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
+        {/* TAB MENU */}
         {tab === "menu" && authUser.role === "owner" && (
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", color: C.primary }}>📋 Manajemen Menu</div>
               <div style={{ display: "flex", gap: ".5rem" }}>
-                {/* TOMBOL RESET SAKTI */}
                 <button className="btn" onClick={resetDatabase}
                   style={{ background: C.red, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".4rem" }}>
                   🔄 Reset Menu Joglo
@@ -576,47 +603,107 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
+        {/* TAB LAPORAN */}
         {tab === "laporan" && authUser.role === "owner" && (
-          <div className="no-print" style={{ display: "grid", gap: "1rem" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(170px,1fr))", gap: ".75rem" }}>
-              {[
-                { icon: "💰", label: "Pendapatan Hari Ini", value: fmtRp(todayRev), sub: `${todayTx.length} transaksi`, col: C.accent },
-                { icon: "📅", label: "Pendapatan Bulan Ini", value: fmtRp(monthRev), sub: `${monthTx.length} transaksi`, col: C.green },
-                { icon: "🧾", label: "Total Transaksi", value: String(txns.length), sub: "semua waktu", col: C.blue },
-                { icon: "📊", label: "Rata-rata/Transaksi", value: fmtRp(avgTx), sub: "bulan ini", col: C.purple },
-              ].map((c) => (
-                <div key={c.label} className="card" style={{ padding: "1rem" }}>
-                  <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>{c.icon}</div>
-                  <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>{c.label}</div>
-                  <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", fontWeight: 700, color: c.col }}>{c.value}</div>
-                  <div style={{ fontSize: ".68rem", color: C.textMuted }}>{c.sub}</div>
+          <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+            
+            {/* Filter Panel */}
+            <div className="card" style={{ padding: "1rem", background: C.surfaceAlt }}>
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: ".75rem", flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, fontWeight: 600 }}>Filter Laporan:</span>
+                  <input type="date" className="inp" style={{ width: "auto", padding: ".4rem .6rem" }} value={repStart} onChange={(e) => setRepStart(e.target.value)} />
+                  <span style={{ fontSize: ".8rem", color: C.textLight }}>s.d</span>
+                  <input type="date" className="inp" style={{ width: "auto", padding: ".4rem .6rem" }} value={repEnd} onChange={(e) => setRepEnd(e.target.value)} />
+                  {(repStart || repEnd) && (
+                    <button className="btn" onClick={() => { setRepStart(""); setRepEnd(""); }} style={{ fontSize: ".75rem", padding: ".4rem .6rem", background: C.redBg, color: C.red, borderRadius: 7 }}>Clear</button>
+                  )}
                 </div>
-              ))}
+                <button className="btn" onClick={exportToCSV}
+                  style={{ background: C.green, color: "white", padding: ".5rem 1rem", borderRadius: 8, fontSize: ".8rem", fontWeight: 700, display: "flex", gap: ".4rem", alignItems: "center" }}>
+                  📥 Download Data (CSV)
+                </button>
+              </div>
             </div>
 
-            <div className="card" style={{ padding: "1rem" }}>
-              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>📈 Pendapatan 7 Hari Terakhir</div>
-              <ResponsiveContainer width="100%" height={195}>
-                <BarChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: -10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                  <XAxis dataKey="hari" tick={{ fontSize: 10, fill: C.textLight, fontFamily: "'Source Serif 4',serif" }} />
-                  <YAxis tick={{ fontSize: 9, fill: C.textLight }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                  <Tooltip
-                    formatter={(v) => [fmtRp(v), "Pendapatan"]}
-                    contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: ".78rem", fontFamily: "'Source Serif 4',serif" }}
-                  />
-                  <Bar dataKey="pendapatan" fill={C.accent} radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            {/* Metrik Cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: ".75rem" }}>
+              <div className="card" style={{ padding: "1.25rem" }}>
+                <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💰</div>
+                <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Total Pendapatan (Sesuai Filter)</div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.2rem", fontWeight: 700, color: C.accent }}>{fmtRp(totalFilteredRev)}</div>
+                <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>{filteredTxns.length} transaksi</div>
+              </div>
+
+              {/* Breakdown Pembayaran */}
+              <div className="card" style={{ padding: "1.25rem", gridColumn: "span 2" }}>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".95rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Rekap Metode Pembayaran</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem" }}>
+                  <div>
+                    <div style={{ fontSize: ".75rem", color: C.textLight }}>💵 Uang Tunai</div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.green }}>{fmtRp(breakdown.Tunai)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: ".75rem", color: C.textLight }}>📱 QRIS (Transfer)</div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.blue }}>{fmtRp(breakdown.QRIS)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: ".75rem", color: C.textLight }}>💳 Kartu EDC</div>
+                    <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.purple }}>{fmtRp(breakdown.Kartu)}</div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="card" style={{ padding: "1rem" }}>
-              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Riwayat Transaksi</div>
-              {txns.length === 0 ? (
-                <div style={{ textAlign: "center", color: C.textMuted, padding: "1.5rem", fontSize: ".85rem" }}>Belum ada transaksi</div>
+            {/* Layout 2 Kolom untuk Chart & Best Seller */}
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1.2fr", gap: "1rem" }}>
+              
+              {/* Grafik Penjualan */}
+              <div className="card" style={{ padding: "1.25rem" }}>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: "1rem" }}>📈 Grafik Omzet 7 Hari Terakhir</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: -10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                    <XAxis dataKey="hari" tick={{ fontSize: 10, fill: C.textLight, fontFamily: "'Source Serif 4',serif" }} />
+                    <YAxis tick={{ fontSize: 9, fill: C.textLight }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                    <Tooltip formatter={(v) => [fmtRp(v), "Pendapatan"]} contentStyle={{ background: C.surface, borderRadius: 8, fontSize: ".78rem" }} />
+                    <Bar dataKey="pendapatan" fill={C.accent} radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Best Sellers */}
+              <div className="card" style={{ padding: "1.25rem" }}>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🏆 Top 5 Menu Terlaris</div>
+                {bestSellers.length === 0 ? (
+                   <div style={{ color: C.textMuted, fontSize: ".8rem", textAlign: "center", padding: "1rem" }}>Belum ada data penjualan.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
+                    {bestSellers.map((item, idx) => (
+                      <div key={item.name} style={{ display: "flex", alignItems: "center", gap: ".6rem", paddingBottom: ".4rem", borderBottom: `1px dashed ${C.borderLight}` }}>
+                        <span style={{ fontSize: "1.1rem", background: "#FFF3DC", width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : item.icon}
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: ".8rem", fontWeight: 600, color: C.text }}>{item.name}</div>
+                          <div style={{ fontSize: ".7rem", color: C.accent }}>{fmtRp(item.rev)}</div>
+                        </div>
+                        <div style={{ fontSize: ".85rem", fontWeight: 700, color: C.green }}>{item.qty} porsi</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Riwayat Transaksi */}
+            <div className="card" style={{ padding: "1.25rem" }}>
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Riwayat Transaksi (Sesuai Filter)</div>
+              {filteredTxns.length === 0 ? (
+                <div style={{ textAlign: "center", color: C.textMuted, padding: "1.5rem", fontSize: ".85rem" }}>Belum ada transaksi di rentang tanggal ini.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: ".45rem" }}>
-                  {txns.slice(0, 25).map((tx) => {
+                  {filteredTxns.slice(0, 30).map((tx) => {
                     const mCol = { Tunai: [C.greenBg, C.green], QRIS: [C.blueBg, C.blue], Kartu: [C.purpleBg, C.purple] }[tx.method] || [C.surfaceAlt, C.textLight];
                     return (
                       <div key={tx.id} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".55rem .7rem", background: C.surfaceAlt, borderRadius: 9 }}>
@@ -641,6 +728,7 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
+        {/* TAB STOK */}
         {tab === "stok" && (
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
@@ -702,7 +790,6 @@ export default function RestaurantJoglo() {
       </main>
 
       {/* ═══ MODALS & POP-UPS ═══ */}
-
       {isMobile && showCart && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setShowCart(false)}>
           <div style={{ background: C.surface, borderRadius: 18, padding: "1.25rem", width: "100%", maxWidth: 400, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
