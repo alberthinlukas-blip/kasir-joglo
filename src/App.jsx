@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, writeBatch } from "firebase/firestore";
 import { db } from "./firebase";
 
-const fmt = (n) => new Intl.NumberFormat("id-ID").format(n);
+const fmt = (n) => new Intl.NumberFormat("id-ID").format(Math.round(n));
 const fmtRp = (n) => `Rp ${fmt(n)}`;
 const fmtDate = (iso) => {
   if (!iso) return "-";
@@ -115,10 +115,10 @@ export default function RestaurantJoglo() {
   const [catFilter, setCatFilter] = useState("Semua");
   const [search, setSearch] = useState("");
   
-  // States Modal Pembayaran & Tipe Pesanan
   const [showPay, setShowPay] = useState(false);
   const [payMethod, setPayMethod] = useState("Tunai");
   const [cashIn, setCashIn] = useState("");
+  const [discount, setDiscount] = useState(""); // State baru untuk Diskon
   const [orderType, setOrderType] = useState("Dine-in");
   const [orderNote, setOrderNote] = useState("");
 
@@ -209,8 +209,14 @@ export default function RestaurantJoglo() {
     });
   }, []);
 
-  const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
+  // ── KALKULASI KASIR: SUBTOTAL, DISKON, PAJAK, TOTAL ──
+  const cartSubtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
+  
+  const discountAmt = Number(discount) || 0;
+  const cartTotal = Math.max(0, cartSubtotal - discountAmt);
+  // Pajak Tersembunyi (11% dari Total yang dibayar)
+  const cartTax = cartTotal - (cartTotal / 1.11);
 
   const applyStockDiff = async (oldItems, newItems) => {
     const stockChanges = {}; 
@@ -248,13 +254,16 @@ export default function RestaurantJoglo() {
       no: `INV${String(txns.length + 1).padStart(4, "0")}`,
       date: new Date().toISOString(),
       items: [...cart],
+      subtotal: cartSubtotal,
+      discount: discountAmt,
+      tax: cartTax,
       total: cartTotal,
       method: payMethod,
       cash: payMethod === "Tunai" ? Number(cashIn) : cartTotal,
       change: payMethod === "Tunai" ? Number(cashIn) - cartTotal : 0,
       cashier: authUser.username,
-      orderType: orderType, // Dine-in, Takeaway, Online
-      orderNote: orderNote  // Nomor meja / Info pelanggan
+      orderType: orderType,
+      orderNote: orderNote
     };
 
     try {
@@ -266,7 +275,8 @@ export default function RestaurantJoglo() {
       setShowPay(false);
       setShowCart(false);
       setCashIn("");
-      setOrderNote(""); // Reset untuk transaksi berikutnya
+      setDiscount("");
+      setOrderNote("");
       setOrderType("Dine-in");
     } catch (e) {
       alert("Gagal memproses pembayaran. Pastikan internet aktif!");
@@ -329,6 +339,8 @@ export default function RestaurantJoglo() {
       date: tx.date,
       originalItems: JSON.parse(JSON.stringify(tx.items)), 
       items: JSON.parse(JSON.stringify(tx.items)),
+      subtotal: tx.subtotal || tx.total,
+      discount: tx.discount || 0,
       total: tx.total,
       method: tx.method || "Tunai",
       cash: tx.cash || tx.total,
@@ -342,17 +354,23 @@ export default function RestaurantJoglo() {
 
   const saveTxnEdit = async () => {
     if (!txnForm.id) return alert("Error: ID tidak valid");
-    const updatedTotal = txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0);
+    const updatedSubtotal = txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0);
+    const updatedDiscount = Number(txnForm.discount) || 0;
+    const updatedTotal = Math.max(0, updatedSubtotal - updatedDiscount);
+    const updatedTax = updatedTotal - (updatedTotal / 1.11);
     const updatedChange = txnForm.method === "Tunai" ? Number(txnForm.cash) - updatedTotal : 0;
     
     try {
       await applyStockDiff(txnForm.originalItems, txnForm.items);
       const docRef = doc(db, "txns", txnForm.id);
       await updateDoc(docRef, {
+        subtotal: updatedSubtotal,
+        discount: updatedDiscount,
+        tax: updatedTax,
+        total: updatedTotal,
         method: txnForm.method,
         cash: txnForm.method === "Tunai" ? Number(txnForm.cash) : updatedTotal,
         change: updatedChange,
-        total: updatedTotal,
         items: txnForm.items,
         orderType: txnForm.orderType,
         orderNote: txnForm.orderNote
@@ -447,8 +465,11 @@ export default function RestaurantJoglo() {
     return true;
   });
 
+  // ── REKAP LAPORAN DENGAN DISKON & PAJAK ──
   const totalFilteredRev = filteredTxns.reduce((s, t) => s + (t.total || 0), 0);
-  const avgFilteredTx = filteredTxns.length ? Math.round(totalFilteredRev / filteredTxns.length) : 0;
+  const totalFilteredDiscount = filteredTxns.reduce((s, t) => s + (t.discount || 0), 0);
+  const totalFilteredTax = filteredTxns.reduce((s, t) => s + (t.tax !== undefined ? t.tax : ((t.total || 0) - ((t.total || 0) / 1.11))), 0);
+  const netRevenue = totalFilteredRev - totalFilteredTax;
 
   const breakdown = filteredTxns.reduce((acc, t) => {
     const mthd = t.method || "Tunai";
@@ -488,17 +509,23 @@ export default function RestaurantJoglo() {
   const escapeCSV = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const exportToCSV = () => {
     if (filteredTxns.length === 0) return alert("Belum ada transaksi di rentang tanggal ini.");
-    const headers = ["Nomor Invoice", "Tanggal", "Tipe Pesanan", "Catatan/Meja", "Rincian Pesanan", "Metode", "Kasir", "Total (Rp)"];
-    const rows = filteredTxns.map(t => [
-      escapeCSV(t.no || "-"),
-      escapeCSV(t.date ? new Date(t.date).toLocaleString("id-ID") : "-"),
-      escapeCSV(t.orderType || "Dine-in"),
-      escapeCSV(t.orderNote || "-"),
-      escapeCSV(Array.isArray(t.items) ? t.items.map(i => `${i.name || "Menu"} (x${i.qty || 1})`).join(" | ") : "-"),
-      escapeCSV(t.method || "Tunai"),
-      escapeCSV(t.cashier || "System"),
-      escapeCSV(t.total || 0),
-    ]);
+    const headers = ["Nomor Invoice", "Tanggal", "Tipe Pesanan", "Catatan", "Rincian Pesanan", "Metode", "Subtotal (Rp)", "Diskon (Rp)", "Pajak (Rp)", "Total Final (Rp)", "Kasir"];
+    const rows = filteredTxns.map(t => {
+      const calcTax = t.tax !== undefined ? t.tax : ((t.total || 0) - ((t.total || 0) / 1.11));
+      return [
+        escapeCSV(t.no || "-"),
+        escapeCSV(t.date ? new Date(t.date).toLocaleString("id-ID") : "-"),
+        escapeCSV(t.orderType || "Dine-in"),
+        escapeCSV(t.orderNote || "-"),
+        escapeCSV(Array.isArray(t.items) ? t.items.map(i => `${i.name || "Menu"} (x${i.qty || 1})`).join(" | ") : "-"),
+        escapeCSV(t.method || "Tunai"),
+        escapeCSV(t.subtotal || t.total || 0),
+        escapeCSV(t.discount || 0),
+        escapeCSV(Math.round(calcTax)),
+        escapeCSV(t.total || 0),
+        escapeCSV(t.cashier || "System"),
+      ];
+    });
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF"
       + headers.map(escapeCSV).join(",") + "\n"
       + rows.map(r => r.join(",")).join("\n");
@@ -510,7 +537,9 @@ export default function RestaurantJoglo() {
     document.body.removeChild(link);
   };
 
-  const txnFormTotal = txnForm.items ? txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0) : 0;
+  const txnFormSubtotal = txnForm.items ? txnForm.items.reduce((s, i) => s + (i.price * i.qty), 0) : 0;
+  const txnFormDiscount = Number(txnForm.discount) || 0;
+  const txnFormTotal = Math.max(0, txnFormSubtotal - txnFormDiscount);
   const txnFormChange = txnForm.method === "Tunai" ? Number(txnForm.cash || 0) - txnFormTotal : 0;
 
   const CartPanel = ({ asModal = false }) => (
@@ -554,8 +583,8 @@ export default function RestaurantJoglo() {
 
           <div style={{ borderTop: `1.5px dashed ${C.border}`, paddingTop: ".75rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".75rem", alignItems: "center" }}>
-              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary }}>Total</span>
-              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", fontWeight: 700, color: C.accent }}>{fmtRp(cartTotal)}</span>
+              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary }}>Subtotal</span>
+              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", fontWeight: 700, color: C.accent }}>{fmtRp(cartSubtotal)}</span>
             </div>
             <div style={{ display: "flex", gap: ".5rem" }}>
               <button className="btn" onClick={() => { setCart([]); setShowCart(false); }}
@@ -564,7 +593,7 @@ export default function RestaurantJoglo() {
               </button>
               <button className="btn" onClick={() => { setShowPay(true); setShowCart(false); }}
                 style={{ flex: 2, padding: ".55rem", background: C.accent, color: "white", borderRadius: 9, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>
-                💳 Bayar
+                💳 Lanjut Bayar
               </button>
             </div>
           </div>
@@ -696,7 +725,7 @@ export default function RestaurantJoglo() {
               <button className="btn" onClick={() => setShowCart(true)}
                 style={{ position: "fixed", bottom: "1.5rem", right: "1.5rem", background: C.accent, color: "white", borderRadius: 99, padding: ".65rem 1.2rem", fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700, zIndex: 90, boxShadow: "0 4px 20px rgba(200,134,10,.45)", display: "flex", alignItems: "center", gap: ".5rem" }}>
                 🧾 Keranjang · {cartQty}
-                <span style={{ fontWeight: 400, fontSize: ".78rem" }}>{fmtRp(cartTotal)}</span>
+                <span style={{ fontWeight: 400, fontSize: ".78rem" }}>{fmtRp(cartSubtotal)}</span>
               </button>
             )}
           </div>
@@ -741,7 +770,7 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
-        {/* TAB LAPORAN */}
+        {/* TAB LAPORAN DENGAN PERHITUNGAN PAJAK */}
         {tab === "laporan" && authUser.role === "owner" && (
           <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
 
@@ -769,40 +798,37 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: ".75rem" }}>
+            {/* ── KOTAK METRIK KEUANGAN BARU ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: ".75rem" }}>
+              
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💰</div>
-                <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Total Pendapatan (Sesuai Filter)</div>
-                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.2rem", fontWeight: 700, color: C.accent }}>{fmtRp(totalFilteredRev)}</div>
-                <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>{filteredTxns.length} transaksi</div>
+                <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Omzet Kotor (Gross)</div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.primary }}>{fmtRp(totalFilteredRev)}</div>
+                <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>Dari {filteredTxns.length} transaksi</div>
+              </div>
+
+              <div className="card" style={{ padding: "1.25rem", background: C.blueBg, borderColor: "#D4E6F1" }}>
+                <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💎</div>
+                <div style={{ fontSize: ".7rem", color: C.blue, marginBottom: ".15rem", fontWeight: 600 }}>Pendapatan Bersih (Netto)</div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.blue }}>{fmtRp(netRevenue)}</div>
+                <div style={{ fontSize: ".7rem", color: C.blue, marginTop: ".2rem", opacity: 0.8 }}>Uang asli milik resto</div>
+              </div>
+
+              <div className="card" style={{ padding: "1.25rem", background: C.redBg, borderColor: "#F5B7B1" }}>
+                <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>🏛️</div>
+                <div style={{ fontSize: ".7rem", color: C.red, marginBottom: ".15rem", fontWeight: 600 }}>Pajak PPN (11%) Disimpan</div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.red }}>{fmtRp(totalFilteredTax)}</div>
+                <div style={{ fontSize: ".7rem", color: C.red, marginTop: ".2rem", opacity: 0.8 }}>Siap disetor ke negara</div>
               </div>
 
               <div className="card" style={{ padding: "1.25rem" }}>
-                <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>📊</div>
-                <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Rata-rata per Transaksi</div>
-                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.2rem", fontWeight: 700, color: C.purple }}>{fmtRp(avgFilteredTx)}</div>
-                <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>
-                  {filteredTxns.length > 0 ? `dari ${filteredTxns.length} transaksi` : "belum ada data"}
-                </div>
+                <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💸</div>
+                <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Total Diskon Diberikan</div>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.accent }}>{fmtRp(totalFilteredDiscount)}</div>
+                <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>Biaya promosi/potongan</div>
               </div>
 
-              <div className="card" style={{ padding: "1.25rem", gridColumn: "span 2" }}>
-                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".95rem", color: C.primary, marginBottom: ".75rem" }}>🧾 Rekap Metode Pembayaran</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem" }}>
-                  <div>
-                    <div style={{ fontSize: ".75rem", color: C.textLight }}>💵 Uang Tunai</div>
-                    <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.green }}>{fmtRp(breakdown.Tunai)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: ".75rem", color: C.textLight }}>📱 QRIS (Transfer)</div>
-                    <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.blue }}>{fmtRp(breakdown.QRIS)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: ".75rem", color: C.textLight }}>💳 Kartu EDC</div>
-                    <div style={{ fontSize: "1.05rem", fontWeight: 700, color: C.purple }}>{fmtRp(breakdown.Kartu)}</div>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1.2fr", gap: "1rem" }}>
@@ -859,6 +885,7 @@ export default function RestaurantJoglo() {
                           <div style={{ display: "flex", alignItems: "center", gap: ".4rem" }}>
                             <span style={{ fontWeight: 600, fontSize: ".8rem", color: C.text }}>{tx.no}</span>
                             <span style={{ fontSize: ".6rem", background: "#E8D5B7", color: C.primaryMid, padding: "1px 6px", borderRadius: 4 }}>{tx.orderType}</span>
+                            {tx.discount > 0 && <span style={{ fontSize: ".6rem", background: C.redBg, color: C.red, padding: "1px 6px", borderRadius: 4 }}>% Diskon</span>}
                           </div>
                           <div style={{ fontSize: ".7rem", color: C.textLight, marginTop: ".1rem" }}>
                             {fmtDate(tx.date)} {tx.orderNote && `• ${tx.orderNote}`}
@@ -980,7 +1007,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* ── Modal Pembayaran dengan Fitur Nomor Meja ── */}
+      {/* ── Modal Pembayaran dengan Fitur Diskon & Meja ── */}
       {showPay && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowPay(false)}>
           <div className="modal" style={{ maxHeight: "90vh", overflowY: "auto" }}>
@@ -1012,9 +1039,24 @@ export default function RestaurantJoglo() {
                   <span style={{ fontWeight: 600 }}>{fmtRp(c.price * c.qty)}</span>
                 </div>
               ))}
-              <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-                <span style={{ fontFamily: "'Playfair Display',serif" }}>Total</span>
-                <span style={{ color: C.accent, fontSize: "1rem" }}>{fmtRp(cartTotal)}</span>
+              <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem" }}>
+                
+                {/* ── INPUT DISKON KASIR ── */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".5rem" }}>
+                  <span style={{ fontSize: ".8rem", color: C.primaryMid, fontWeight: 600 }}>Diskon (Rp)</span>
+                  <input className="inp" type="number" placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} 
+                    style={{ width: 100, padding: ".3rem .5rem", textAlign: "right" }} />
+                </div>
+
+                {discountAmt > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.red, marginBottom: ".2rem", fontWeight: 600 }}>
+                    <span>Potongan Diskon</span><span>-{fmtRp(discountAmt)}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, marginTop: ".3rem" }}>
+                  <span style={{ fontFamily: "'Playfair Display',serif" }}>Total Bayar</span>
+                  <span style={{ color: C.accent, fontSize: "1rem" }}>{fmtRp(cartTotal)}</span>
+                </div>
               </div>
             </div>
 
@@ -1090,8 +1132,20 @@ export default function RestaurantJoglo() {
                   </div>
                 ))}
                 <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem" }}>
+                  
+                  {receipt.discount > 0 && (
+                     <>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.textMid, marginBottom: ".2rem" }}>
+                           <span>Subtotal</span><span>{fmtRp(receipt.subtotal)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.red, marginBottom: ".2rem", fontWeight: 600 }}>
+                           <span>Diskon</span><span>-{fmtRp(receipt.discount)}</span>
+                        </div>
+                     </>
+                  )}
+
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: ".88rem" }}>
-                    <span>Total</span><span style={{ color: C.accent }}>{fmtRp(receipt.total)}</span>
+                    <span>Total Bayar</span><span style={{ color: C.accent }}>{fmtRp(receipt.total)}</span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.textLight, marginTop: ".2rem" }}>
                     <span>Bayar ({receipt.method})</span><span>{fmtRp(receipt.cash)}</span>
@@ -1104,9 +1158,10 @@ export default function RestaurantJoglo() {
                 </div>
               </div>
 
-              <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: "1rem", fontStyle: "italic" }}>
-                Terima kasih telah berkunjung ke Resto Joglo Alberthin 🏛️
+              <div style={{ fontSize: ".7rem", color: C.textMuted, marginBottom: "1rem", fontStyle: "italic", background: "#F0E0C0", padding: ".4rem", borderRadius: 8 }}>
+                *Harga sudah termasuk Pajak Restoran (11%)
               </div>
+
               <div style={{ display: "flex", gap: ".5rem" }}>
                 <button className="btn" onClick={() => setReceipt(null)}
                   style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10, fontWeight: 600 }}>
@@ -1152,6 +1207,21 @@ export default function RestaurantJoglo() {
               </tbody>
             </table>
             <div className="garis-putus"></div>
+            
+            {receipt.discount > 0 && (
+               <>
+                  <div className="print-flex" style={{ fontSize: "14px" }}>
+                     <span>Subtotal:</span>
+                     <span>{fmtRp(receipt.subtotal)}</span>
+                  </div>
+                  <div className="print-flex" style={{ fontSize: "14px" }}>
+                     <span>Diskon:</span>
+                     <span>-{fmtRp(receipt.discount)}</span>
+                  </div>
+                  <div className="garis-putus"></div>
+               </>
+            )}
+
             <div className="print-flex" style={{ fontWeight: "bold", fontSize: "16px" }}>
               <span>TOTAL BAYAR:</span>
               <span>{fmtRp(receipt.total)}</span>
@@ -1168,7 +1238,7 @@ export default function RestaurantJoglo() {
               </div>
             )}
             <p style={{ textAlign: "center", marginTop: "15px" }}>
-              Harga sudah termasuk Pajak<br />
+              *Harga sudah termasuk Pajak (11%)<br />
               Terima Kasih!
             </p>
           </div>
@@ -1215,9 +1285,16 @@ export default function RestaurantJoglo() {
               )) : (
                 <div style={{ fontSize: ".8rem", color: C.textMuted, textAlign: "center", padding: ".5rem" }}>Semua item dihapus</div>
               )}
-              <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".25rem", paddingTop: ".4rem", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: ".85rem" }}>
-                <span>Total Baru</span>
-                <span style={{ color: C.accent }}>{fmtRp(txnFormTotal)}</span>
+              
+              <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".25rem", paddingTop: ".4rem" }}>
+                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".4rem" }}>
+                    <span style={{ fontSize: ".75rem", fontWeight: 600, color: C.primaryMid }}>Diskon Tambahan (Rp)</span>
+                    <input className="inp" type="number" value={txnForm.discount || ""} onChange={(e) => setTxnForm(p => ({ ...p, discount: e.target.value }))} style={{ padding: ".3rem", width: 90, textAlign: "right" }} />
+                 </div>
+                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: ".85rem" }}>
+                   <span>Total Baru</span>
+                   <span style={{ color: C.accent }}>{fmtRp(txnFormTotal)}</span>
+                 </div>
               </div>
             </div>
 
