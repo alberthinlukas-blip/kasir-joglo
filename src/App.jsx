@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-// 1. IMPORT FIREBASE YANG BARU KITA BUAT
-import { collection, addDoc, onSnapshot } from "firebase/firestore";
+// IMPORT FIREBASE
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
 const fmt = (n) => new Intl.NumberFormat("id-ID").format(n);
@@ -13,36 +13,20 @@ const fmtDate = (iso) =>
     hour: "2-digit", minute: "2-digit",
   });
 
-// DATABASE PENGGUNA (SISTEM AKSES)
 const DB_USERS = {
   "Lucas": { password: "040900", role: "owner" },
   "Budi": { password: "123456", role: "karyawan" }
 };
 
 const INIT_MENU = [
-  { id: 1, name: "Nasi Goreng Joglo", category: "Nasi", price: 35000, icon: "🍳" },
-  { id: 2, name: "Ayam Bakar Kampung", category: "Lauk", price: 45000, icon: "🍗" },
-  { id: 3, name: "Soto Ayam", category: "Sup", price: 30000, icon: "🍲" },
-  { id: 4, name: "Gado-Gado", category: "Sayur", price: 25000, icon: "🥗" },
-  { id: 5, name: "Es Teh Manis", category: "Minuman", price: 8000, icon: "🧋" },
-  { id: 6, name: "Es Jeruk", category: "Minuman", price: 10000, icon: "🍊" },
-  { id: 7, name: "Tempe Orek", category: "Lauk", price: 15000, icon: "🫘" },
-  { id: 8, name: "Nasi Putih", category: "Nasi", price: 5000, icon: "🍚" },
-  { id: 9, name: "Rawon", category: "Sup", price: 40000, icon: "🥣" },
-  { id: 10, name: "Pisang Goreng", category: "Camilan", price: 15000, icon: "🍌" },
-  { id: 11, name: "Teh Hangat", category: "Minuman", price: 7000, icon: "☕" },
-  { id: 12, name: "Bakwan Jagung", category: "Camilan", price: 12000, icon: "🌽" },
+  { id: "m1", name: "Nasi Goreng Joglo", category: "Nasi", price: 35000, icon: "🍳" },
+  { id: "m2", name: "Ayam Bakar Kampung", category: "Lauk", price: 45000, icon: "🍗" },
+  { id: "m3", name: "Es Teh Manis", category: "Minuman", price: 8000, icon: "🧋" }
 ];
 
 const INIT_STOCK = [
-  { id: 1, name: "Beras", unit: "kg", quantity: 50, minQty: 10 },
-  { id: 2, name: "Ayam", unit: "kg", quantity: 4, minQty: 5 },
-  { id: 3, name: "Minyak Goreng", unit: "liter", quantity: 8, minQty: 3 },
-  { id: 4, name: "Bumbu Dapur", unit: "set", quantity: 20, minQty: 5 },
-  { id: 5, name: "Sayuran Segar", unit: "kg", quantity: 2, minQty: 3 },
-  { id: 6, name: "Teh", unit: "pack", quantity: 5, minQty: 2 },
-  { id: 7, name: "Gula Pasir", unit: "kg", quantity: 10, minQty: 3 },
-  { id: 8, name: "Tepung Terigu", unit: "kg", quantity: 8, minQty: 3 },
+  { id: "s1", name: "Beras", unit: "kg", quantity: 50, minQty: 10 },
+  { id: "s2", name: "Ayam", unit: "kg", quantity: 4, minQty: 5 }
 ];
 
 const C = {
@@ -89,8 +73,8 @@ export default function RestaurantJoglo() {
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   
   const [tab, setTab] = useState("kasir");
-  const [menu, setMenu] = useState(INIT_MENU);
-  const [stock, setStock] = useState(INIT_STOCK);
+  const [menu, setMenu] = useState([]);
+  const [stock, setStock] = useState([]);
   const [txns, setTxns] = useState([]);
   const [cart, setCart] = useState([]);
   const [catFilter, setCatFilter] = useState("Semua");
@@ -104,7 +88,6 @@ export default function RestaurantJoglo() {
   const [stockModal, setStockModal] = useState(null);
   const [menuForm, setMenuForm] = useState({});
   const [stockForm, setStockForm] = useState({});
-  const [loaded, setLoaded] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 680);
   const [confirmDel, setConfirmDel] = useState(null);
 
@@ -121,30 +104,38 @@ export default function RestaurantJoglo() {
     return () => window.removeEventListener("resize", h);
   }, []);
 
-  // 2. MENGHUBUNGKAN TRANSAKSI KE FIREBASE REAL-TIME
+  // --- KONEKSI SINKRONISASI TOTAL KE FIREBASE ---
   useEffect(() => {
-    // Memuat data Menu & Stok dari memori lokal agar tetap ngebut
     try { const r = localStorage.getItem("jg_auth"); if (r) setAuthUser(JSON.parse(r)); } catch {}
-    try { const r = localStorage.getItem("jg_menu"); if (r) setMenu(JSON.parse(r)); } catch {}
-    try { const r = localStorage.getItem("jg_stock"); if (r) setStock(JSON.parse(r)); } catch {}
-    setLoaded(true);
 
-    // Membuka jalur khusus ke Firebase untuk Transaksi
+    // 1. Sinkronisasi Transaksi
     const unsubTxns = onSnapshot(collection(db, "txns"), (snapshot) => {
-      const dataOnline = snapshot.docs.map(doc => doc.data());
-      // Urutkan transaksi dari yang terbaru ke terlama
-      dataOnline.sort((a, b) => new Date(b.date) - new Date(a.date));
-      setTxns(dataOnline);
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setTxns(data);
     });
 
-    return () => unsubTxns(); // Tutup jalur saat aplikasi ditutup
+    // 2. Sinkronisasi Menu
+    const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setMenu(data.length > 0 ? data : INIT_MENU); // Pakai INIT jika Firebase masih kosong
+    });
+
+    // 3. Sinkronisasi Stok
+    const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStock(data.length > 0 ? data : INIT_STOCK); // Pakai INIT jika Firebase masih kosong
+    });
+
+    return () => { unsubTxns(); unsubMenu(); unsubStock(); };
   }, []);
 
-  useEffect(() => { if (loaded) { if(authUser) localStorage.setItem("jg_auth", JSON.stringify(authUser)); else localStorage.removeItem("jg_auth"); } }, [authUser, loaded]);
-  useEffect(() => { if (loaded) localStorage.setItem("jg_menu", JSON.stringify(menu)); }, [menu, loaded]);
-  useEffect(() => { if (loaded) localStorage.setItem("jg_stock", JSON.stringify(stock)); }, [stock, loaded]);
-  // Catatan: jg_txns tidak lagi disimpan di localStorage, melainkan di Cloud Firebase!
+  useEffect(() => { 
+    if(authUser) localStorage.setItem("jg_auth", JSON.stringify(authUser)); 
+    else localStorage.removeItem("jg_auth"); 
+  }, [authUser]);
 
+  // --- FUNGSI LOGIN & LOGOUT ---
   const doLogin = (e) => {
     e.preventDefault();
     const user = DB_USERS[loginForm.username];
@@ -159,6 +150,7 @@ export default function RestaurantJoglo() {
 
   const doLogout = () => { if (window.confirm("Yakin ingin logout dari mesin kasir?")) setAuthUser(null); };
 
+  // --- LOGIKA KASIR ---
   const addToCart = useCallback((item) => {
     setCart((p) => {
       const ex = p.find((c) => c.id === item.id);
@@ -176,11 +168,10 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
-  // 3. MENGUBAH TOMBOL BAYAR AGAR MENGIRIM DATA KE INTERNET
+  // --- FUNGSI BAYAR (SIMPAN KE FIREBASE) ---
   const doPayment = async () => {
     if (!cart.length) return;
     const tx = {
-      id: Date.now(),
       no: `INV${String(txns.length + 1).padStart(4, "0")}`,
       date: new Date().toISOString(),
       items: [...cart],
@@ -192,17 +183,14 @@ export default function RestaurantJoglo() {
     };
     
     try {
-      // Perintah sakti untuk mengirim invoice ke server Firebase
       await addDoc(collection(db, "txns"), tx);
-      
       setReceipt(tx);
       setCart([]);
       setShowPay(false);
       setShowCart(false);
       setCashIn("");
-    } catch (error) {
-      alert("Gagal memproses pembayaran. Pastikan perangkat terhubung ke internet!");
-      console.error(error);
+    } catch (e) {
+      alert("Gagal koneksi ke server. Pastikan internet aktif!");
     }
   };
 
@@ -213,6 +201,58 @@ export default function RestaurantJoglo() {
 
   const payOk = payMethod !== "Tunai" || Number(cashIn) >= cartTotal;
 
+  // --- FUNGSI MANAJEMEN MENU & STOK (SIMPAN KE FIREBASE) ---
+  const openMenuEdit = (item) => {
+    setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
+    setMenuModal(item ? "edit" : "new");
+  };
+
+  const saveMenu = async () => {
+    if (!menuForm.name || !menuForm.price) return;
+    const itemData = { 
+      name: menuForm.name, 
+      category: menuForm.category || "Umum", 
+      price: Number(menuForm.price), 
+      icon: menuForm.icon || "🍽️" 
+    };
+
+    try {
+      if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
+      else await updateDoc(doc(db, "menu", menuForm.id), itemData);
+      setMenuModal(null);
+    } catch (e) { alert("Gagal menyimpan menu ke Cloud!"); }
+  };
+
+  const openStockEdit = (item) => {
+    setStockForm(item ? { ...item } : { name: "", unit: "", quantity: "", minQty: "" });
+    setStockModal(item ? "edit" : "new");
+  };
+
+  const saveStock = async () => {
+    if (!stockForm.name) return;
+    const itemData = {
+      name: stockForm.name,
+      unit: stockForm.unit || "pcs",
+      quantity: Number(stockForm.quantity),
+      minQty: Number(stockForm.minQty)
+    };
+
+    try {
+      if (stockModal === "new") await addDoc(collection(db, "stock"), itemData);
+      else await updateDoc(doc(db, "stock", stockForm.id), itemData);
+      setStockModal(null);
+    } catch (e) { alert("Gagal menyimpan stok ke Cloud!"); }
+  };
+
+  const handleDelete = async (type, id) => {
+    try {
+      // type bernilai "menu" atau "stock"
+      await deleteDoc(doc(db, type, id));
+      setConfirmDel(null);
+    } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
+  };
+
+  // --- FILTER & LAPORAN ---
   const categories = ["Semua", ...new Set(menu.map((m) => m.category))];
   const filteredMenu = menu.filter((m) => {
     const mc = catFilter === "Semua" || m.category === catFilter;
@@ -243,34 +283,7 @@ export default function RestaurantJoglo() {
 
   const lowStock = stock.filter((s) => s.quantity <= s.minQty);
 
-  const openMenuEdit = (item) => {
-    setMenuForm(item ? { ...item } : { id: Date.now(), name: "", category: "", price: "", icon: "🍽️" });
-    setMenuModal(item ? "edit" : "new");
-  };
-  const saveMenu = () => {
-    if (!menuForm.name || !menuForm.price) return;
-    const item = { ...menuForm, price: Number(menuForm.price) };
-    setMenu((p) => menuModal === "new" ? [...p, item] : p.map((m) => (m.id === item.id ? item : m)));
-    setMenuModal(null);
-  };
-
-  const openStockEdit = (item) => {
-    setStockForm(item ? { ...item } : { id: Date.now(), name: "", unit: "", quantity: "", minQty: "" });
-    setStockModal(item ? "edit" : "new");
-  };
-  const saveStock = () => {
-    if (!stockForm.name) return;
-    const item = { ...stockForm, quantity: Number(stockForm.quantity), minQty: Number(stockForm.minQty) };
-    setStock((p) => stockModal === "new" ? [...p, item] : p.map((s) => (s.id === item.id ? item : s)));
-    setStockModal(null);
-  };
-
-  const handleDelete = (type, id) => {
-    if (type === "menu") setMenu((p) => p.filter((m) => m.id !== id));
-    if (type === "stock") setStock((p) => p.filter((s) => s.id !== id));
-    setConfirmDel(null);
-  };
-
+  // --- KOMPONEN KERANJANG KASIR ---
   const CartPanel = ({ asModal = false }) => (
     <div className={asModal ? "" : "card"} style={{
       background: C.surface, borderRadius: asModal ? 18 : 14, padding: "1rem",
@@ -331,6 +344,7 @@ export default function RestaurantJoglo() {
     </div>
   );
 
+  // --- LAYAR LOGIN ---
   if (!authUser) {
     return (
       <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
@@ -358,10 +372,12 @@ export default function RestaurantJoglo() {
     );
   }
 
+  // --- LAYAR APLIKASI UTAMA ---
   return (
     <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", background: C.bg, minHeight: "100vh", color: C.text }}>
       <style>{styles}</style>
 
+      {/* Header */}
       <header className="no-print" style={{ background: C.primary, padding: ".7rem 1.25rem", display: "flex", alignItems: "center", gap: "1rem", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 2px 20px rgba(0,0,0,.3)" }}>
         <div style={{ fontSize: "1.5rem" }}>🏛️</div>
         <div>
@@ -375,7 +391,9 @@ export default function RestaurantJoglo() {
               <div style={{ fontSize: ".8rem", fontWeight: 700, color: C.surface }}>{authUser.username}</div>
               <div style={{ fontSize: ".6rem", color: C.accentLight, fontWeight: 600 }}>{authUser.role.toUpperCase()}</div>
             </div>
-            <button className="btn" onClick={doLogout} style={{ background: C.red, color: "white", borderRadius: 8, padding: ".35rem .7rem", fontSize: ".75rem", fontWeight: 600 }}>Logout</button>
+            <button className="btn" onClick={doLogout} style={{ background: C.red, color: "white", borderRadius: 8, padding: ".35rem .7rem", fontSize: ".75rem", fontWeight: 600 }}>
+              Logout
+            </button>
           </div>
 
           {lowStock.length > 0 && (
@@ -392,6 +410,7 @@ export default function RestaurantJoglo() {
         </div>
       </header>
 
+      {/* Navigasi Menu */}
       <nav className="no-print" style={{ background: C.primaryMid, padding: ".45rem 1rem", display: "flex", gap: ".4rem", overflowX: "auto", position: "sticky", top: 55, zIndex: 49, boxShadow: "0 2px 8px rgba(0,0,0,.15)" }}>
         {NAV_TABS.filter(n => n.roles.includes(authUser.role)).map((n) => (
           <button key={n.key} className="nav-tab" onClick={() => setTab(n.key)}
@@ -404,11 +423,14 @@ export default function RestaurantJoglo() {
       </nav>
 
       <main style={{ padding: "1rem", maxWidth: 1200, margin: "0 auto" }}>
+        
+        {/* TAB: KASIR */}
         {tab === "kasir" && (
           <div className="no-print" style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 310px", gap: "1rem", alignItems: "start" }}>
             <div>
               <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginBottom: ".75rem" }}>
-                <input className="inp" placeholder="🔍 Cari menu…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1, minWidth: 140, maxWidth: 240 }} />
+                <input className="inp" placeholder="🔍 Cari menu…" value={search} onChange={(e) => setSearch(e.target.value)}
+                  style={{ flex: 1, minWidth: 140, maxWidth: 240 }} />
                 <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
                   {categories.map((c) => (
                     <button key={c} className="pill" onClick={() => setCatFilter(c)}
@@ -425,7 +447,9 @@ export default function RestaurantJoglo() {
                   return (
                     <div key={item.id} className="menu-tile card" onClick={() => addToCart(item)}
                       style={{ padding: ".85rem .7rem", position: "relative", background: inCart ? "#FFF3DC" : C.surface, border: `1px solid ${inCart ? C.accent : C.borderLight}` }}>
-                      {inCart && <span style={{ position: "absolute", top: 6, right: 6, background: C.accent, color: "white", borderRadius: 99, fontSize: ".62rem", fontWeight: 700, padding: "1px 6px" }}>{inCart.qty}</span>}
+                      {inCart && (
+                        <span style={{ position: "absolute", top: 6, right: 6, background: C.accent, color: "white", borderRadius: 99, fontSize: ".62rem", fontWeight: 700, padding: "1px 6px" }}>{inCart.qty}</span>
+                      )}
                       <div style={{ fontSize: "2rem", textAlign: "center", marginBottom: ".4rem" }}>{item.icon}</div>
                       <div style={{ fontSize: ".78rem", fontWeight: 600, color: C.text, lineHeight: 1.3, marginBottom: ".25rem", textAlign: "center" }}>{item.name}</div>
                       <div style={{ fontSize: ".72rem", color: C.accent, fontWeight: 700, textAlign: "center" }}>{fmtRp(item.price)}</div>
@@ -433,23 +457,35 @@ export default function RestaurantJoglo() {
                     </div>
                   );
                 })}
+                {filteredMenu.length === 0 && (
+                  <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "2.5rem", color: C.textMuted, fontSize: ".88rem" }}>
+                    Tidak ada menu yang sesuai
+                  </div>
+                )}
               </div>
             </div>
 
             {!isMobile && <CartPanel />}
+
             {isMobile && cartQty > 0 && (
-              <button className="btn" onClick={() => setShowCart(true)} style={{ position: "fixed", bottom: "1.5rem", right: "1.5rem", background: C.accent, color: "white", borderRadius: 99, padding: ".65rem 1.2rem", fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700, zIndex: 90, boxShadow: "0 4px 20px rgba(200,134,10,.45)", display: "flex", alignItems: "center", gap: ".5rem" }}>
-                🧾 Keranjang · {cartQty} <span style={{ fontWeight: 400, fontSize: ".78rem" }}>{fmtRp(cartTotal)}</span>
+              <button className="btn" onClick={() => setShowCart(true)}
+                style={{ position: "fixed", bottom: "1.5rem", right: "1.5rem", background: C.accent, color: "white", borderRadius: 99, padding: ".65rem 1.2rem", fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700, zIndex: 90, boxShadow: "0 4px 20px rgba(200,134,10,.45)", display: "flex", alignItems: "center", gap: ".5rem" }}>
+                🧾 Keranjang · {cartQty}
+                <span style={{ fontWeight: 400, fontSize: ".78rem" }}>{fmtRp(cartTotal)}</span>
               </button>
             )}
           </div>
         )}
 
+        {/* TAB: MANAJEMEN MENU */}
         {tab === "menu" && authUser.role === "owner" && (
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", color: C.primary }}>📋 Manajemen Menu</div>
-              <button className="btn" onClick={() => openMenuEdit(null)} style={{ background: C.accent, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".4rem" }}>+ Tambah Menu</button>
+              <button className="btn" onClick={() => openMenuEdit(null)}
+                style={{ background: C.accent, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".4rem" }}>
+                + Tambah Menu
+              </button>
             </div>
             <div style={{ display: "grid", gap: ".55rem" }}>
               {menu.map((item) => (
@@ -463,8 +499,10 @@ export default function RestaurantJoglo() {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: ".4rem" }}>
-                    <button className="btn" onClick={() => openMenuEdit(item)} style={{ padding: ".38rem .65rem", background: C.blueBg, color: C.blue, borderRadius: 7, fontSize: ".75rem" }}>✏️ Edit</button>
-                    <button className="btn" onClick={() => setConfirmDel({ type: "menu", id: item.id, name: item.name })} style={{ padding: ".38rem .65rem", background: C.redBg, color: C.red, borderRadius: 7, fontSize: ".75rem" }}>🗑️</button>
+                    <button className="btn" onClick={() => openMenuEdit(item)}
+                      style={{ padding: ".38rem .65rem", background: C.blueBg, color: C.blue, borderRadius: 7, fontSize: ".75rem" }}>✏️ Edit</button>
+                    <button className="btn" onClick={() => setConfirmDel({ type: "menu", id: item.id, name: item.name })}
+                      style={{ padding: ".38rem .65rem", background: C.redBg, color: C.red, borderRadius: 7, fontSize: ".75rem" }}>🗑️</button>
                   </div>
                 </div>
               ))}
@@ -472,6 +510,7 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
+        {/* TAB: LAPORAN */}
         {tab === "laporan" && authUser.role === "owner" && (
           <div className="no-print" style={{ display: "grid", gap: "1rem" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(170px,1fr))", gap: ".75rem" }}>
@@ -497,7 +536,10 @@ export default function RestaurantJoglo() {
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
                   <XAxis dataKey="hari" tick={{ fontSize: 10, fill: C.textLight, fontFamily: "'Source Serif 4',serif" }} />
                   <YAxis tick={{ fontSize: 9, fill: C.textLight }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-                  <Tooltip formatter={(v) => [fmtRp(v), "Pendapatan"]} contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: ".78rem", fontFamily: "'Source Serif 4',serif" }} />
+                  <Tooltip
+                    formatter={(v) => [fmtRp(v), "Pendapatan"]}
+                    contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, fontSize: ".78rem", fontFamily: "'Source Serif 4',serif" }}
+                  />
                   <Bar dataKey="pendapatan" fill={C.accent} radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -534,12 +576,16 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
+        {/* TAB: STOK */}
         {tab === "stok" && (
           <div className="no-print">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", color: C.primary }}>📦 Informasi Stok Bahan</div>
               {authUser.role === "owner" && (
-                <button className="btn" onClick={() => openStockEdit(null)} style={{ background: C.accent, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem" }}>+ Tambah Bahan</button>
+                <button className="btn" onClick={() => openStockEdit(null)}
+                  style={{ background: C.accent, color: "white", borderRadius: 9, padding: ".48rem 1rem", fontSize: ".82rem" }}>
+                  + Tambah Bahan
+                </button>
               )}
             </div>
 
@@ -576,8 +622,10 @@ export default function RestaurantJoglo() {
                       
                       {authUser.role === "owner" && (
                         <div style={{ display: "flex", gap: ".4rem" }}>
-                          <button className="btn" onClick={() => openStockEdit(item)} style={{ padding: ".38rem .65rem", background: C.blueBg, color: C.blue, borderRadius: 7, fontSize: ".75rem" }}>✏️ Edit</button>
-                          <button className="btn" onClick={() => setConfirmDel({ type: "stock", id: item.id, name: item.name })} style={{ padding: ".38rem .65rem", background: C.redBg, color: C.red, borderRadius: 7, fontSize: ".75rem" }}>🗑️</button>
+                          <button className="btn" onClick={() => openStockEdit(item)}
+                            style={{ padding: ".38rem .65rem", background: C.blueBg, color: C.blue, borderRadius: 7, fontSize: ".75rem" }}>✏️ Edit</button>
+                          <button className="btn" onClick={() => setConfirmDel({ type: "stock", id: item.id, name: item.name })}
+                            style={{ padding: ".38rem .65rem", background: C.redBg, color: C.red, borderRadius: 7, fontSize: ".75rem" }}>🗑️</button>
                         </div>
                       )}
                     </div>
@@ -589,6 +637,7 @@ export default function RestaurantJoglo() {
         )}
       </main>
 
+      {/* ═══ MODALS & POP-UPS ═══ */}
       {isMobile && showCart && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setShowCart(false)}>
           <div style={{ background: C.surface, borderRadius: 18, padding: "1.25rem", width: "100%", maxWidth: 400, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -609,11 +658,13 @@ export default function RestaurantJoglo() {
             <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", fontSize: ".8rem" }}>
               {cart.map((c) => (
                 <div key={c.id} style={{ display: "flex", justifyContent: "space-between", marginBottom: ".2rem", color: C.textMid }}>
-                  <span>{c.icon} {c.name} ×{c.qty}</span><span style={{ fontWeight: 600 }}>{fmtRp(c.price * c.qty)}</span>
+                  <span>{c.icon} {c.name} ×{c.qty}</span>
+                  <span style={{ fontWeight: 600 }}>{fmtRp(c.price * c.qty)}</span>
                 </div>
               ))}
               <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-                <span style={{ fontFamily: "'Playfair Display',serif" }}>Total</span><span style={{ color: C.accent, fontSize: "1rem" }}>{fmtRp(cartTotal)}</span>
+                <span style={{ fontFamily: "'Playfair Display',serif" }}>Total</span>
+                <span style={{ color: C.accent, fontSize: "1rem" }}>{fmtRp(cartTotal)}</span>
               </div>
             </div>
 
@@ -634,11 +685,14 @@ export default function RestaurantJoglo() {
                 <div style={{ fontSize: ".8rem", color: C.primaryMid, marginBottom: ".4rem", fontWeight: 600 }}>Uang Diterima</div>
                 <input className="inp" type="number" placeholder="Masukkan jumlah uang" value={cashIn} onChange={(e) => setCashIn(e.target.value)} />
                 {cashIn && Number(cashIn) >= cartTotal && (
-                  <div style={{ marginTop: ".4rem", fontSize: ".85rem", color: C.green, fontWeight: 600 }}>Kembalian: {fmtRp(Number(cashIn) - cartTotal)}</div>
+                  <div style={{ marginTop: ".4rem", fontSize: ".85rem", color: C.green, fontWeight: 600 }}>
+                    Kembalian: {fmtRp(Number(cashIn) - cartTotal)}
+                  </div>
                 )}
                 <div style={{ display: "flex", gap: ".35rem", marginTop: ".5rem", flexWrap: "wrap" }}>
                   {[...new Set([cartTotal, 50000, 100000, 200000])].sort((a, b) => a - b).map((v) => (
-                    <button key={v} className="btn" onClick={() => setCashIn(String(v))} style={{ padding: ".28rem .55rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 7, fontSize: ".72rem" }}>
+                    <button key={v} className="btn" onClick={() => setCashIn(String(v))}
+                      style={{ padding: ".28rem .55rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 7, fontSize: ".72rem" }}>
                       {v === cartTotal ? "Pas · " : ""}{fmtRp(v)}
                     </button>
                   ))}
@@ -653,7 +707,8 @@ export default function RestaurantJoglo() {
             )}
 
             <div style={{ display: "flex", gap: ".5rem" }}>
-              <button className="btn" onClick={() => setShowPay(false)} style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
+              <button className="btn" onClick={() => setShowPay(false)}
+                style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
               <button className="btn" onClick={doPayment} disabled={!payOk}
                 style={{ flex: 2, padding: ".65rem", background: payOk ? C.green : "#B0C4B0", color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700, cursor: payOk ? "pointer" : "not-allowed" }}>
                 ✅ Proses Bayar
@@ -674,7 +729,8 @@ export default function RestaurantJoglo() {
               <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", textAlign: "left" }}>
                 {receipt.items.map((c) => (
                   <div key={c.id} style={{ display: "flex", justifyContent: "space-between", fontSize: ".8rem", marginBottom: ".2rem", color: C.textMid }}>
-                    <span>{c.icon} {c.name} ×{c.qty}</span><span>{fmtRp(c.price * c.qty)}</span>
+                    <span>{c.icon} {c.name} ×{c.qty}</span>
+                    <span>{fmtRp(c.price * c.qty)}</span>
                   </div>
                 ))}
                 <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem" }}>
@@ -690,10 +746,6 @@ export default function RestaurantJoglo() {
                     </div>
                   )}
                 </div>
-              </div>
-
-              <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: "1rem", fontStyle: "italic" }}>
-                Terima kasih telah berkunjung ke Resto Joglo Alberthin 🏛️
               </div>
               <div style={{ display: "flex", gap: ".5rem" }}>
                 <button className="btn" onClick={() => setReceipt(null)} style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10, fontWeight: 600 }}>Tutup</button>
@@ -711,76 +763,107 @@ export default function RestaurantJoglo() {
             <p style={{ margin: 0 }}>Waktu: {fmtDate(receipt.date)}<br />No. Inv: {receipt.no}<br />Kasir: {authUser.username}</p>
             <div className="garis-putus"></div>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr><th style={{ textAlign: "left", paddingBottom: "5px" }}>Item</th><th style={{ textAlign: "right", paddingBottom: "5px" }}>Qty</th><th style={{ textAlign: "right", paddingBottom: "5px" }}>Total</th></tr>
-              </thead>
+              <thead><tr><th style={{ textAlign: "left", paddingBottom: "5px" }}>Item</th><th style={{ textAlign: "right", paddingBottom: "5px" }}>Qty</th><th style={{ textAlign: "right", paddingBottom: "5px" }}>Total</th></tr></thead>
               <tbody>
-                {receipt.items.map((c) => (
-                  <tr key={c.id}>
-                    <td style={{ padding: "4px 0" }}>{c.name}</td><td style={{ textAlign: "right", padding: "4px 0" }}>{c.qty}</td><td style={{ textAlign: "right", padding: "4px 0" }}>{fmtRp(c.price * c.qty)}</td>
-                  </tr>
-                ))}
+                {receipt.items.map((c) => (<tr key={c.id}><td style={{ padding: "4px 0" }}>{c.name}</td><td style={{ textAlign: "right", padding: "4px 0" }}>{c.qty}</td><td style={{ textAlign: "right", padding: "4px 0" }}>{fmtRp(c.price * c.qty)}</td></tr>))}
               </tbody>
             </table>
             <div className="garis-putus"></div>
             <div className="print-flex" style={{ fontWeight: "bold", fontSize: "16px" }}><span>TOTAL BAYAR:</span><span>{fmtRp(receipt.total)}</span></div>
             <div className="garis-putus"></div>
             <div className="print-flex"><span>{receipt.method}:</span><span>{fmtRp(receipt.cash)}</span></div>
-            {receipt.method === "Tunai" && <div className="print-flex"><span>Kembalian:</span><span>{fmtRp(receipt.change)}</span></div>}
-            <p style={{ textAlign: "center", marginTop: "15px" }}>Harga sudah termasuk Pajak<br />Terima Kasih!</p>
+            {receipt.method === "Tunai" && (<div className="print-flex"><span>Kembalian:</span><span>{fmtRp(receipt.change)}</span></div>)}
           </div>
         </>
       )}
 
+      {/* Menu Edit Modal */}
       {menuModal && authUser.role === "owner" && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setMenuModal(null)}>
           <div className="modal">
-            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: "1rem" }}>{menuModal === "new" ? "+ Tambah Menu Baru" : "✏️ Edit Menu"}</div>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: "1rem" }}>
+              {menuModal === "new" ? "+ Tambah Menu Baru" : "✏️ Edit Menu"}
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
-              <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Nama Menu *</label><input className="inp" placeholder="Contoh: Nasi Goreng Spesial" value={menuForm.name || ""} onChange={(e) => setMenuForm((p) => ({ ...p, name: e.target.value }))} /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem" }}>
-                <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Kategori</label><input className="inp" placeholder="Nasi / Lauk / Minuman" value={menuForm.category || ""} onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value }))} /></div>
-                <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Ikon Emoji</label><input className="inp" placeholder="🍽️" value={menuForm.icon || ""} onChange={(e) => setMenuForm((p) => ({ ...p, icon: e.target.value }))} /></div>
+              <div>
+                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Nama Menu *</label>
+                <input className="inp" placeholder="Contoh: Nasi Goreng Spesial" value={menuForm.name || ""} onChange={(e) => setMenuForm((p) => ({ ...p, name: e.target.value }))} />
               </div>
-              <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Harga (Rp) *</label><input className="inp" type="number" placeholder="25000" value={menuForm.price || ""} onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem" }}>
+                <div>
+                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Kategori</label>
+                  <input className="inp" placeholder="Nasi / Lauk / Minuman" value={menuForm.category || ""} onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Ikon Emoji</label>
+                  <input className="inp" placeholder="🍽️" value={menuForm.icon || ""} onChange={(e) => setMenuForm((p) => ({ ...p, icon: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Harga (Rp) *</label>
+                <input className="inp" type="number" placeholder="25000" value={menuForm.price || ""} onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))} />
+              </div>
             </div>
             <div style={{ display: "flex", gap: ".5rem", marginTop: "1.25rem" }}>
               <button className="btn" onClick={() => setMenuModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={saveMenu} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>{menuModal === "new" ? "+ Tambahkan" : "✅ Simpan"}</button>
+              <button className="btn" onClick={saveMenu} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>
+                {menuModal === "new" ? "+ Tambahkan" : "✅ Simpan"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Stock Edit Modal */}
       {stockModal && authUser.role === "owner" && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setStockModal(null)}>
           <div className="modal">
-            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: "1rem" }}>{stockModal === "new" ? "+ Tambah Bahan Baru" : "✏️ Edit Stok"}</div>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: "1rem" }}>
+              {stockModal === "new" ? "+ Tambah Bahan Baru" : "✏️ Edit Stok"}
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
-              <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Nama Bahan *</label><input className="inp" placeholder="Beras, Ayam, dll." value={stockForm.name || ""} onChange={(e) => setStockForm((p) => ({ ...p, name: e.target.value }))} /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem" }}>
-                <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Satuan</label><input className="inp" placeholder="kg / liter / pack" value={stockForm.unit || ""} onChange={(e) => setStockForm((p) => ({ ...p, unit: e.target.value }))} /></div>
-                <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Jumlah Stok</label><input className="inp" type="number" placeholder="50" value={stockForm.quantity || ""} onChange={(e) => setStockForm((p) => ({ ...p, quantity: e.target.value }))} /></div>
+              <div>
+                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Nama Bahan *</label>
+                <input className="inp" placeholder="Beras, Ayam, dll." value={stockForm.name || ""} onChange={(e) => setStockForm((p) => ({ ...p, name: e.target.value }))} />
               </div>
-              <div><label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Stok Minimum (batas alert)</label><input className="inp" type="number" placeholder="10" value={stockForm.minQty || ""} onChange={(e) => setStockForm((p) => ({ ...p, minQty: e.target.value }))} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem" }}>
+                <div>
+                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Satuan</label>
+                  <input className="inp" placeholder="kg / liter / pack" value={stockForm.unit || ""} onChange={(e) => setStockForm((p) => ({ ...p, unit: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Jumlah Stok</label>
+                  <input className="inp" type="number" placeholder="50" value={stockForm.quantity || ""} onChange={(e) => setStockForm((p) => ({ ...p, quantity: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Stok Minimum</label>
+                <input className="inp" type="number" placeholder="10" value={stockForm.minQty || ""} onChange={(e) => setStockForm((p) => ({ ...p, minQty: e.target.value }))} />
+              </div>
             </div>
             <div style={{ display: "flex", gap: ".5rem", marginTop: "1.25rem" }}>
               <button className="btn" onClick={() => setStockModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={saveStock} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>{stockModal === "new" ? "+ Tambahkan" : "✅ Simpan"}</button>
+              <button className="btn" onClick={saveStock} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>
+                {stockModal === "new" ? "+ Tambahkan" : "✅ Simpan"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Confirm Delete */}
       {confirmDel && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setConfirmDel(null)}>
           <div className="modal" style={{ maxWidth: 360, textAlign: "center" }}>
             <div style={{ fontSize: "2rem", marginBottom: ".5rem" }}>🗑️</div>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1rem", color: C.primary, marginBottom: ".5rem" }}>Hapus data ini?</div>
-            <div style={{ fontSize: ".85rem", color: C.textMid, marginBottom: "1.25rem" }}><strong>{confirmDel.name}</strong> akan dihapus permanen.</div>
+            <div style={{ fontSize: ".85rem", color: C.textMid, marginBottom: "1.25rem" }}>
+              <strong>{confirmDel.name}</strong> akan dihapus permanen.
+            </div>
             <div style={{ display: "flex", gap: ".5rem" }}>
               <button className="btn" onClick={() => setConfirmDel(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={() => handleDelete(confirmDel.type, confirmDel.id)} style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus</button>
+              <button className="btn" onClick={() => handleDelete(confirmDel.type, confirmDel.id)}
+                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus</button>
             </div>
           </div>
         </div>
