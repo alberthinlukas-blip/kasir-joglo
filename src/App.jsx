@@ -48,7 +48,6 @@ const INIT_STOCK = [
   { id: "s9", name: "Jahe", unit: "kg", quantity: 5, minQty: 1 }
 ];
 
-// ──🔥 FUNGSI RESEP GLOBAL (Untuk Sync Stok) 🔥──
 const getRecipe = (menuName) => {
   const name = (menuName || "").toLowerCase();
   if (name.includes("nasi goreng")) return [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
@@ -127,11 +126,9 @@ export default function RestaurantJoglo() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 680);
   const [confirmDel, setConfirmDel] = useState(null);
 
-  // Filter Tanggal
   const [repStart, setRepStart] = useState("");
   const [repEnd, setRepEnd] = useState("");
 
-  // Edit & Hapus Transaksi
   const [txnEditModal, setTxnEditModal] = useState(null);
   const [txnForm, setTxnForm] = useState({});
   const [confirmDelTxn, setConfirmDelTxn] = useState(null);
@@ -209,7 +206,6 @@ export default function RestaurantJoglo() {
   const cartTotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
 
-  // ──🔥 FUNGSI AJAIB: MENGHITUNG DAN MENYESUAIKAN STOK OTOMATIS 🔥──
   const applyStockDiff = async (oldItems, newItems) => {
     const stockChanges = {}; 
     
@@ -217,22 +213,20 @@ export default function RestaurantJoglo() {
       for (const item of items) {
         const recipe = getRecipe(item.name);
         for (const ing of recipe) {
-          // Cari stok di state lokal berdasarkan keyword
           const stockTarget = stock.find(s => (s.name || "").toLowerCase().includes(ing.stockKeyword));
           if (stockTarget) {
             const change = ing.qty * (item.qty || 1);
             if (!stockChanges[stockTarget.id]) {
               stockChanges[stockTarget.id] = { docId: stockTarget.id, current: stockTarget.quantity, diff: 0 };
             }
-            // Kalau revert (hapus/edit hapus) = ditambah (+), kalau apply baru = dikurangi (-)
             stockChanges[stockTarget.id].diff += (isRevert ? change : -change);
           }
         }
       }
     };
 
-    if (oldItems) aggregate(oldItems, true);  // Kembalikan stok lama
-    if (newItems) aggregate(newItems, false); // Potong stok baru
+    if (oldItems) aggregate(oldItems, true); 
+    if (newItems) aggregate(newItems, false);
 
     const batch = writeBatch(db);
     for (const key in stockChanges) {
@@ -259,9 +253,7 @@ export default function RestaurantJoglo() {
     };
 
     try {
-      // 1. Simpan Transaksi
       await addDoc(collection(db, "txns"), tx);
-      // 2. Potong Stok (oldItems = null, newItems = cart)
       await applyStockDiff(null, cart);
 
       setReceipt(tx);
@@ -323,13 +315,12 @@ export default function RestaurantJoglo() {
     }
   };
 
-  // ── EDIT TRANSAKSI (DENGAN SINKRONISASI STOK) ──
   const openTxnEdit = (tx) => {
     setTxnForm({
       id: tx.id,
       no: tx.no,
       date: tx.date,
-      originalItems: JSON.parse(JSON.stringify(tx.items)), // Simpan riwayat pesanan awal untuk selisih
+      originalItems: JSON.parse(JSON.stringify(tx.items)), 
       items: JSON.parse(JSON.stringify(tx.items)),
       total: tx.total,
       method: tx.method || "Tunai",
@@ -346,10 +337,7 @@ export default function RestaurantJoglo() {
     const updatedChange = txnForm.method === "Tunai" ? Number(txnForm.cash) - updatedTotal : 0;
     
     try {
-      // 1. Sinkronisasi Stok (Kembalikan stok lama, lalu potong dengan yang baru)
       await applyStockDiff(txnForm.originalItems, txnForm.items);
-
-      // 2. Update Database Transaksi
       const docRef = doc(db, "txns", txnForm.id);
       await updateDoc(docRef, {
         method: txnForm.method,
@@ -365,19 +353,14 @@ export default function RestaurantJoglo() {
     }
   };
 
-  // ── HAPUS 1 TRANSAKSI (DENGAN PENGEMBALIAN STOK) ──
   const confirmDeleteTxn = (tx) => setConfirmDelTxn(tx);
 
   const doDeleteTxn = async () => {
     if (!confirmDelTxn?.id) return;
     try {
-      // 1. Kembalikan stok (revert oldItems = tx.items, newItems = null)
       await applyStockDiff(confirmDelTxn.items, null);
-      
-      // 2. Hapus Transaksi
       const docRef = doc(db, "txns", confirmDelTxn.id);
       await deleteDoc(docRef);
-      
       setConfirmDelTxn(null);
     } catch (e) { 
       console.error(e);
@@ -402,7 +385,6 @@ export default function RestaurantJoglo() {
     });
   };
 
-  // ── Manajemen Menu & Stok Asli ──
   const openMenuEdit = (item) => {
     setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
     setMenuModal(item ? "edit" : "new");
@@ -440,7 +422,6 @@ export default function RestaurantJoglo() {
     } catch (e) { alert("Gagal menghapus data dari Cloud!"); }
   };
 
-  // --- LOGIKA FILTER & REPORTING ---
   const categories = ["Semua", ...new Set(menu.map((m) => m.category || "Umum"))];
   const filteredMenu = menu.filter((m) => {
     const mc = catFilter === "Semua" || (m.category || "Umum") === catFilter;
@@ -842,7 +823,7 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* ── Riwayat Transaksi dengan tombol Edit & Hapus ── */}
+            {/* ── Riwayat Transaksi dengan tombol Cetak, Edit & Hapus ── */}
             <div className="card" style={{ padding: "1.25rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>
                 🧾 Riwayat Transaksi
@@ -870,8 +851,12 @@ export default function RestaurantJoglo() {
                             <span style={{ fontSize: ".62rem", color: C.primaryMid }}>Kasir: {tx.cashier || "-"}</span>
                           </div>
                         </div>
-                        {/* ── Tombol Edit & Hapus per transaksi ── */}
+                        {/* ── Tombol Cetak, Edit & Hapus per transaksi ── */}
                         <div style={{ display: "flex", flexDirection: "column", gap: ".3rem", flexShrink: 0 }}>
+                          <button className="btn" onClick={() => setReceipt(tx)}
+                            style={{ padding: ".28rem .55rem", background: C.greenBg, color: C.green, borderRadius: 7, fontSize: ".72rem", display: "flex", alignItems: "center", gap: ".25rem" }}>
+                            🖨️ Cetak
+                          </button>
                           <button className="btn" onClick={() => openTxnEdit(tx)}
                             style={{ padding: ".28rem .55rem", background: C.blueBg, color: C.blue, borderRadius: 7, fontSize: ".72rem", display: "flex", alignItems: "center", gap: ".25rem" }}>
                             ✏️ Edit
@@ -1047,8 +1032,8 @@ export default function RestaurantJoglo() {
         <>
           <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setReceipt(null)}>
             <div className="modal" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: "2.5rem", marginBottom: ".5rem" }}>✅</div>
-              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.15rem", color: C.green, marginBottom: ".25rem" }}>Pembayaran Berhasil!</div>
+              <div style={{ fontSize: "2.5rem", marginBottom: ".5rem" }}>🧾</div>
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.15rem", color: C.green, marginBottom: ".25rem" }}>Struk Transaksi</div>
               <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: "1rem" }}>{receipt.no} · {fmtDate(receipt.date)}</div>
 
               <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", textAlign: "left" }}>
@@ -1083,7 +1068,7 @@ export default function RestaurantJoglo() {
                 </button>
                 <button className="btn" onClick={handlePrintAndClose}
                   style={{ flex: 2, padding: ".65rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700 }}>
-                  🖨️ Cetak & Tutup
+                  🖨️ Cetak
                 </button>
               </div>
             </div>
