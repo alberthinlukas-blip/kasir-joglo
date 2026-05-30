@@ -119,6 +119,7 @@ export default function RestaurantJoglo() {
   const [cashIn, setCashIn] = useState("");
   const [receipt, setReceipt] = useState(null);
   const [showCart, setShowCart] = useState(false);
+  const [showHistory, setShowHistory] = useState(false); // State baru untuk modal Riwayat Kasir
   const [menuModal, setMenuModal] = useState(null);
   const [stockModal, setStockModal] = useState(null);
   const [menuForm, setMenuForm] = useState({});
@@ -642,6 +643,13 @@ export default function RestaurantJoglo() {
               <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginBottom: ".75rem" }}>
                 <input className="inp" placeholder="🔍 Cari menu…" value={search} onChange={(e) => setSearch(e.target.value)}
                   style={{ flex: 1, minWidth: 140, maxWidth: 240 }} />
+                
+                {/* ── TOMBOL RIWAYAT UNTUK KASIR ── */}
+                <button className="btn" onClick={() => setShowHistory(true)}
+                  style={{ padding: ".4rem .8rem", background: "white", border: `1.5px solid ${C.border}`, borderRadius: 9, fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "flex", alignItems: "center", gap: ".4rem" }}>
+                  🕒 Riwayat Transaksi
+                </button>
+
                 <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
                   {categories.map((c) => (
                     <button key={c} className="pill" onClick={() => setCatFilter(c)}
@@ -823,7 +831,6 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* ── Riwayat Transaksi dengan tombol Cetak, Edit & Hapus ── */}
             <div className="card" style={{ padding: "1.25rem" }}>
               <div style={{ fontFamily: "'Playfair Display',serif", fontSize: ".9rem", color: C.primary, marginBottom: ".75rem" }}>
                 🧾 Riwayat Transaksi
@@ -851,7 +858,6 @@ export default function RestaurantJoglo() {
                             <span style={{ fontSize: ".62rem", color: C.primaryMid }}>Kasir: {tx.cashier || "-"}</span>
                           </div>
                         </div>
-                        {/* ── Tombol Cetak, Edit & Hapus per transaksi ── */}
                         <div style={{ display: "flex", flexDirection: "column", gap: ".3rem", flexShrink: 0 }}>
                           <button className="btn" onClick={() => setReceipt(tx)}
                             style={{ padding: ".28rem .55rem", background: C.greenBg, color: C.green, borderRadius: 7, fontSize: ".72rem", display: "flex", alignItems: "center", gap: ".25rem" }}>
@@ -1303,6 +1309,39 @@ export default function RestaurantJoglo() {
           </div>
         </div>
       )}
+
+      {/* ── MODAL RIWAYAT KHUSUS KASIR ── */}
+      {showHistory && (
+        <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowHistory(false)}>
+          <div className="modal" style={{ maxWidth: 450, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary }}>🕒 Riwayat Transaksi Hari Ini</span>
+              <button className="btn" onClick={() => setShowHistory(false)} style={{ background: "#F0E0C0", color: C.primaryMid, borderRadius: 99, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" }}>×</button>
+            </div>
+            <div style={{ overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: ".5rem", paddingRight: ".2rem" }}>
+              {txns.slice(0, 20).map(tx => (
+                <div key={tx.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: ".6rem .75rem", background: C.surfaceAlt, borderRadius: 9, border: `1px solid ${C.borderLight}` }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: ".85rem", color: C.text }}>{tx.no}</div>
+                    <div style={{ fontSize: ".7rem", color: C.textLight }}>{fmtDate(tx.date)}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontWeight: 700, fontSize: ".85rem", color: C.accent }}>{fmtRp(tx.total)}</div>
+                      <div style={{ fontSize: ".65rem", color: C.primaryMid }}>Kasir: {tx.cashier}</div>
+                    </div>
+                    <button className="btn" onClick={() => setReceipt(tx)} style={{ padding: ".35rem .6rem", background: C.greenBg, color: C.green, borderRadius: 7, fontSize: ".75rem", fontWeight: 600 }}>
+                      🖨️ Cetak
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {txns.length === 0 && <div style={{ textAlign: "center", color: C.textMuted, padding: "1rem", fontSize: ".85rem" }}>Belum ada transaksi.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
