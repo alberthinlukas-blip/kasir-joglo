@@ -24,42 +24,46 @@ const DB_USERS = {
 };
 
 const INIT_MENU = [
-  { id: "m1", name: "Nasi Goreng Joglo", category: "Utama", price: 35000, icon: "🍳" },
-  { id: "m2", name: "Magelangan Spesial", category: "Utama", price: 30000, icon: "🍜" },
-  { id: "m3", name: "Nasi Rendang Rempah", category: "Utama", price: 45000, icon: "🍛" },
-  { id: "m4", name: "Ayam Bakar Kampung", category: "Lauk", price: 40000, icon: "🍗" },
-  { id: "m5", name: "Soto Ayam Kemangi", category: "Sup", price: 30000, icon: "🍲" },
-  { id: "m6", name: "Rawon Daging Sapi", category: "Sup", price: 40000, icon: "🥣" },
-  { id: "m7", name: "Burger Sapi Joglo", category: "Fusion", price: 35000, icon: "🍔" },
-  { id: "m8", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" },
-  { id: "m9", name: "Es Teh Manis", category: "Minuman", price: 8000, icon: "🧋" },
-  { id: "m10", name: "Wedang Jahe", category: "Minuman", price: 12000, icon: "☕" }
+  { id: "m1", name: "Mie Nyemek Kresna", category: "Utama", price: 25000, icon: "🍜" },
+  { id: "m2", name: "Nasi Goreng Kresna", category: "Utama", price: 26000, icon: "🍛" },
+  { id: "m3", name: "Magelangan Kresna", category: "Utama", price: 27000, icon: "🍳" },
+  { id: "m4", name: "Pisang Goreng", category: "Camilan", price: 18000, icon: "🍌" },
+  { id: "m5", name: "Roti Panggang", category: "Camilan", price: 18000, icon: "🍞" },
+  { id: "m6", name: "Mix Platter", category: "Camilan", price: 35000, icon: "🍟" },
+  { id: "m7", name: "Wedang Uwuh", category: "Minuman", price: 15000, icon: "🍵" },
+  { id: "m8", name: "Wedang Jahe", category: "Minuman", price: 12000, icon: "☕" },
+  { id: "m9", name: "Kopi Tubruk", category: "Minuman", price: 10000, icon: "☕" },
+  { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" }
 ];
 
 const INIT_STOCK = [
-  { id: "s1", name: "Beras", unit: "kg", quantity: 50, minQty: 10 },
-  { id: "s2", name: "Mie Kuning", unit: "porsi", quantity: 40, minQty: 10 },
-  { id: "s3", name: "Daging Sapi", unit: "kg", quantity: 15, minQty: 3 },
-  { id: "s4", name: "Ayam Kampung", unit: "porsi", quantity: 30, minQty: 5 },
-  { id: "s5", name: "Roti Burger", unit: "pcs", quantity: 20, minQty: 5 },
-  { id: "s6", name: "Tempe", unit: "papan", quantity: 20, minQty: 5 },
-  { id: "s7", name: "Telur", unit: "butir", quantity: 60, minQty: 15 },
-  { id: "s8", name: "Teh", unit: "pack", quantity: 10, minQty: 2 },
-  { id: "s9", name: "Jahe", unit: "kg", quantity: 5, minQty: 1 }
+  { id: "s1", name: "Mie Instan", unit: "pcs", quantity: 160, minQty: 40 }, // Total dari 4 Dus
+  { id: "s2", name: "Kentang Crinkle", unit: "kg", quantity: 4.05, minQty: 1 },
+  { id: "s3", name: "Sosis Curah", unit: "kg", quantity: 1.975, minQty: 0.5 },
+  { id: "s4", name: "Nugget Curah", unit: "kg", quantity: 1.77, minQty: 0.5 },
+  { id: "s5", name: "Meses Lagie", unit: "kg", quantity: 3, minQty: 0.5 }, // 12 x 250g
+  { id: "s6", name: "Gula Pasir", unit: "kg", quantity: 5, minQty: 1 },
+  { id: "s7", name: "Teh Bubuk", unit: "pack", quantity: 21, minQty: 5 }, // Gopek + Tjatoet + Bandulan
+  { id: "s8", name: "Beras", unit: "kg", quantity: 20, minQty: 5 },
+  { id: "s9", name: "Telur", unit: "butir", quantity: 50, minQty: 15 },
+  { id: "s10", name: "Roti Tawar", unit: "lembar", quantity: 40, minQty: 10 },
+  { id: "s11", name: "Pisang", unit: "pcs", quantity: 30, minQty: 5 }
 ];
 
 const getRecipe = (menuName) => {
   const name = (menuName || "").toLowerCase();
-  if (name.includes("nasi goreng")) return [{ stockKeyword: "beras", qty: 0.25 }, { stockKeyword: "telur", qty: 1 }];
-  if (name.includes("magelangan")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "mie", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
-  if (name.includes("rendang")) return [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "daging sapi", qty: 0.2 }];
-  if (name.includes("ayam")) return [{ stockKeyword: "ayam", qty: 1 }];
-  if (name.includes("soto")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "ayam", qty: 0.5 }];
-  if (name.includes("rawon")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "daging sapi", qty: 0.15 }];
-  if (name.includes("burger")) return [{ stockKeyword: "roti", qty: 1 }, { stockKeyword: "daging sapi", qty: 0.1 }];
-  if (name.includes("mendoan")) return [{ stockKeyword: "tempe", qty: 0.5 }];
-  if (name.includes("teh")) return [{ stockKeyword: "teh", qty: 0.05 }];
-  if (name.includes("jahe")) return [{ stockKeyword: "jahe", qty: 0.1 }];
+  
+  if (name.includes("mie nyemek")) return [{ stockKeyword: "mie instan", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+  if (name.includes("nasi goreng")) return [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "telur", qty: 1 }];
+  if (name.includes("magelangan")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "mie instan", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+  
+  if (name.includes("mix platter")) return [{ stockKeyword: "kentang", qty: 0.1 }, { stockKeyword: "sosis", qty: 0.05 }, { stockKeyword: "nugget", qty: 0.05 }]; // Misal perporsi kentang 100g, sosis/nugget 50g
+  if (name.includes("pisang goreng")) return [{ stockKeyword: "pisang", qty: 2 }, { stockKeyword: "meses", qty: 0.015 }];
+  if (name.includes("roti panggang")) return [{ stockKeyword: "roti", qty: 2 }, { stockKeyword: "meses", qty: 0.025 }]; // 25 gram meses perporsi
+  
+  if (name.includes("teh manis")) return [{ stockKeyword: "teh", qty: 0.05 }, { stockKeyword: "gula", qty: 0.025 }]; // Gula 25g perporsi
+  
+  // Untuk Wedang & Kopi belum dikurangi otomatis karena belum ada di INIT_STOCK, bisa ditambahkan nanti.
   return [];
 };
 
