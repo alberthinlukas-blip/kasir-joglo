@@ -33,13 +33,13 @@ const INIT_MENU = [
   { id: "m7", name: "Wedang Uwuh", category: "Minuman", price: 15000, icon: "🍵" },
   { id: "m8", name: "Wedang Jahe", category: "Minuman", price: 12000, icon: "☕" },
   { id: "m9", name: "Kopi Tubruk", category: "Minuman", price: 10000, icon: "☕" },
-  { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" }
+  { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" }, // <-- Tadi koma di sini hilang
   { id: "m11", name: "Lontong Sayur Biasa", category: "Utama", price: 15000, icon: "🍲" },
   { id: "m12", name: "Lontong Sayur Telur", category: "Utama", price: 18000, icon: "🍲" },
-  { id: "m12", name: "Bakwan Goreng", category: "Camilan", price: 10000, icon: "🍘" },
-  { id: "m13", name: "Singkong Goreng", category: "Camilan", price: 12000, icon: "🍠" },
-  { id: "m14", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" },
-  { id: "m15", name: "Air Mineral", category: "Minuman", price: 5000, icon: "💧" } //
+  { id: "m13", name: "Bakwan Goreng", category: "Camilan", price: 10000, icon: "🍘" }, // <-- ID diganti jadi m13
+  { id: "m14", name: "Singkong Goreng", category: "Camilan", price: 12000, icon: "🍠" }, // <-- ID disesuaikan
+  { id: "m15", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" }, // <-- ID disesuaikan
+  { id: "m16", name: "Air Mineral", category: "Minuman", price: 5000, icon: "💧" } // <-- ID disesuaikan
 ];
 
 const INIT_STOCK = [
