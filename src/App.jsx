@@ -34,6 +34,8 @@ const INIT_MENU = [
   { id: "m8", name: "Wedang Jahe", category: "Minuman", price: 12000, icon: "☕" },
   { id: "m9", name: "Kopi Tubruk", category: "Minuman", price: 10000, icon: "☕" },
   { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" }
+  { id: "m11", name: "Lontong Sayur Biasa", category: "Utama", price: 15000, icon: "🍲" },
+{ id: "m12", name: "Lontong Sayur Telur", category: "Utama", price: 18000, icon: "🍲" },
 ];
 
 const INIT_STOCK = [
@@ -48,6 +50,8 @@ const INIT_STOCK = [
   { id: "s9", name: "Telur", unit: "butir", quantity: 50, minQty: 15 },
   { id: "s10", name: "Roti Tawar", unit: "lembar", quantity: 40, minQty: 10 },
   { id: "s11", name: "Pisang", unit: "pcs", quantity: 30, minQty: 5 }
+  { id: "s12", name: "Lontong", unit: "pcs", quantity: 20, minQty: 5 }
+  
 ];
 
 const getRecipe = (menuName) => {
@@ -62,7 +66,9 @@ const getRecipe = (menuName) => {
   if (name.includes("roti panggang")) return [{ stockKeyword: "roti", qty: 2 }, { stockKeyword: "meses", qty: 0.025 }]; // 25 gram meses perporsi
   
   if (name.includes("teh manis")) return [{ stockKeyword: "teh", qty: 0.05 }, { stockKeyword: "gula", qty: 0.025 }]; // Gula 25g perporsi
-  
+  if (name === "lontong sayur biasa") return [{ stockKeyword: "lontong", qty: 1 }];
+if (name === "lontong sayur telur") return [{ stockKeyword: "lontong", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+
   // Untuk Wedang & Kopi belum dikurangi otomatis karena belum ada di INIT_STOCK, bisa ditambahkan nanti.
   return [];
 };
