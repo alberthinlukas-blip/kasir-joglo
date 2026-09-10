@@ -35,7 +35,11 @@ const INIT_MENU = [
   { id: "m9", name: "Kopi Tubruk", category: "Minuman", price: 10000, icon: "☕" },
   { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" }
   { id: "m11", name: "Lontong Sayur Biasa", category: "Utama", price: 15000, icon: "🍲" },
-{ id: "m12", name: "Lontong Sayur Telur", category: "Utama", price: 18000, icon: "🍲" },
+  { id: "m12", name: "Lontong Sayur Telur", category: "Utama", price: 18000, icon: "🍲" },
+  { id: "m12", name: "Bakwan Goreng", category: "Camilan", price: 10000, icon: "🍘" },
+  { id: "m13", name: "Singkong Goreng", category: "Camilan", price: 12000, icon: "🍠" },
+  { id: "m14", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" },
+  { id: "m15", name: "Air Mineral", category: "Minuman", price: 5000, icon: "💧" } //
 ];
 
 const INIT_STOCK = [
@@ -49,8 +53,12 @@ const INIT_STOCK = [
   { id: "s8", name: "Beras", unit: "kg", quantity: 20, minQty: 5 },
   { id: "s9", name: "Telur", unit: "butir", quantity: 50, minQty: 15 },
   { id: "s10", name: "Roti Tawar", unit: "lembar", quantity: 40, minQty: 10 },
-  { id: "s11", name: "Pisang", unit: "pcs", quantity: 30, minQty: 5 }
-  { id: "s12", name: "Lontong", unit: "pcs", quantity: 20, minQty: 5 }
+  { id: "s11", name: "Pisang", unit: "pcs", quantity: 30, minQty: 5 },
+  { id: "s12", name: "Lontong", unit: "pcs", quantity: 20, minQty: 5 },
+  { id: "s13", name: "Tepung Terigu", unit: "kg", quantity: 5, minQty: 1 },
+  { id: "s14", name: "Singkong", unit: "kg", quantity: 10, minQty: 2 },
+  { id: "s15", name: "Tempe", unit: "papan", quantity: 20, minQty: 5 },
+  { id: "s16", name: "Air Mineral Botol", unit: "botol", quantity: 48, minQty: 12 } //
   
 ];
 
@@ -67,7 +75,11 @@ const getRecipe = (menuName) => {
   
   if (name.includes("teh manis")) return [{ stockKeyword: "teh", qty: 0.05 }, { stockKeyword: "gula", qty: 0.025 }]; // Gula 25g perporsi
   if (name === "lontong sayur biasa") return [{ stockKeyword: "lontong", qty: 1 }];
-if (name === "lontong sayur telur") return [{ stockKeyword: "lontong", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+  if (name === "lontong sayur telur") return [{ stockKeyword: "lontong", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
+  if (name.includes("bakwan goreng")) return [{ stockKeyword: "terigu", qty: 0.1 }]; // Potong 100gr terigu
+  if (name.includes("singkong goreng")) return [{ stockKeyword: "singkong", qty: 0.25 }]; // Potong 250gr singkong
+  if (name.includes("tempe mendoan")) return [{ stockKeyword: "tempe", qty: 0.5 }, { stockKeyword: "terigu", qty: 0.05 }]; // Potong setengah papan tempe + 50gr terigu
+  if (name.includes("air mineral")) return [{ stockKeyword: "air mineral", qty: 1 }]; // Potong 1 botol
 
   // Untuk Wedang & Kopi belum dikurangi otomatis karena belum ada di INIT_STOCK, bisa ditambahkan nanti.
   return [];
