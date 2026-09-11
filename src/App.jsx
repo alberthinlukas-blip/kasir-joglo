@@ -33,23 +33,23 @@ const INIT_MENU = [
   { id: "m7", name: "Wedang Uwuh", category: "Minuman", price: 15000, icon: "🍵" },
   { id: "m8", name: "Wedang Jahe", category: "Minuman", price: 12000, icon: "☕" },
   { id: "m9", name: "Kopi Tubruk", category: "Minuman", price: 10000, icon: "☕" },
-  { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" }, // <-- Tadi koma di sini hilang
+  { id: "m10", name: "Teh Manis (Hot/Ice)", category: "Minuman", price: 8000, icon: "🧋" },
   { id: "m11", name: "Lontong Sayur Biasa", category: "Utama", price: 15000, icon: "🍲" },
   { id: "m12", name: "Lontong Sayur Telur", category: "Utama", price: 18000, icon: "🍲" },
-  { id: "m13", name: "Bakwan Goreng", category: "Camilan", price: 10000, icon: "🍘" }, // <-- ID diganti jadi m13
-  { id: "m14", name: "Singkong Goreng", category: "Camilan", price: 12000, icon: "🍠" }, // <-- ID disesuaikan
-  { id: "m15", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" }, // <-- ID disesuaikan
-  { id: "m16", name: "Air Mineral", category: "Minuman", price: 5000, icon: "💧" } // <-- ID disesuaikan
+  { id: "m13", name: "Bakwan Goreng", category: "Camilan", price: 10000, icon: "🍘" },
+  { id: "m14", name: "Singkong Goreng", category: "Camilan", price: 12000, icon: "🍠" },
+  { id: "m15", name: "Tempe Mendoan", category: "Camilan", price: 15000, icon: "🫘" },
+  { id: "m16", name: "Air Mineral", category: "Minuman", price: 5000, icon: "💧" }
 ];
 
 const INIT_STOCK = [
-  { id: "s1", name: "Mie Instan", unit: "pcs", quantity: 160, minQty: 40 }, // Total dari 4 Dus
+  { id: "s1", name: "Mie Instan", unit: "pcs", quantity: 160, minQty: 40 },
   { id: "s2", name: "Kentang Crinkle", unit: "kg", quantity: 4.05, minQty: 1 },
   { id: "s3", name: "Sosis Curah", unit: "kg", quantity: 1.975, minQty: 0.5 },
   { id: "s4", name: "Nugget Curah", unit: "kg", quantity: 1.77, minQty: 0.5 },
-  { id: "s5", name: "Meses Lagie", unit: "kg", quantity: 3, minQty: 0.5 }, // 12 x 250g
+  { id: "s5", name: "Meses Lagie", unit: "kg", quantity: 3, minQty: 0.5 },
   { id: "s6", name: "Gula Pasir", unit: "kg", quantity: 5, minQty: 1 },
-  { id: "s7", name: "Teh Bubuk", unit: "pack", quantity: 21, minQty: 5 }, // Gopek + Tjatoet + Bandulan
+  { id: "s7", name: "Teh Bubuk", unit: "pack", quantity: 21, minQty: 5 },
   { id: "s8", name: "Beras", unit: "kg", quantity: 20, minQty: 5 },
   { id: "s9", name: "Telur", unit: "butir", quantity: 50, minQty: 15 },
   { id: "s10", name: "Roti Tawar", unit: "lembar", quantity: 40, minQty: 10 },
@@ -58,30 +58,32 @@ const INIT_STOCK = [
   { id: "s13", name: "Tepung Terigu", unit: "kg", quantity: 5, minQty: 1 },
   { id: "s14", name: "Singkong", unit: "kg", quantity: 10, minQty: 2 },
   { id: "s15", name: "Tempe", unit: "papan", quantity: 20, minQty: 5 },
-  { id: "s16", name: "Air Mineral Botol", unit: "botol", quantity: 48, minQty: 12 } //
-  
+  { id: "s16", name: "Air Mineral Botol", unit: "botol", quantity: 48, minQty: 12 }
 ];
 
-const getRecipe = (menuName) => {
-  const name = (menuName || "").toLowerCase();
+// LOGIKA RESEP SEKARANG DINAMIS!
+const getRecipe = (item) => {
+  // 1. Jika menu memiliki resep buatan dari web app, pakai resep itu!
+  if (item && item.recipe && Array.isArray(item.recipe) && item.recipe.length > 0) {
+    return item.recipe;
+  }
   
+  // 2. Jika tidak ada resep dinamis, pakai fallback bawaan sistem lama
+  const name = (item.name || "").toLowerCase();
   if (name.includes("mie nyemek")) return [{ stockKeyword: "mie instan", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
   if (name.includes("nasi goreng")) return [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "telur", qty: 1 }];
   if (name.includes("magelangan")) return [{ stockKeyword: "beras", qty: 0.15 }, { stockKeyword: "mie instan", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
-  
-  if (name.includes("mix platter")) return [{ stockKeyword: "kentang", qty: 0.1 }, { stockKeyword: "sosis", qty: 0.05 }, { stockKeyword: "nugget", qty: 0.05 }]; // Misal perporsi kentang 100g, sosis/nugget 50g
+  if (name.includes("mix platter")) return [{ stockKeyword: "kentang", qty: 0.1 }, { stockKeyword: "sosis", qty: 0.05 }, { stockKeyword: "nugget", qty: 0.05 }];
   if (name.includes("pisang goreng")) return [{ stockKeyword: "pisang", qty: 2 }, { stockKeyword: "meses", qty: 0.015 }];
-  if (name.includes("roti panggang")) return [{ stockKeyword: "roti", qty: 2 }, { stockKeyword: "meses", qty: 0.025 }]; // 25 gram meses perporsi
-  
-  if (name.includes("teh manis")) return [{ stockKeyword: "teh", qty: 0.05 }, { stockKeyword: "gula", qty: 0.025 }]; // Gula 25g perporsi
+  if (name.includes("roti panggang")) return [{ stockKeyword: "roti", qty: 2 }, { stockKeyword: "meses", qty: 0.025 }];
+  if (name.includes("teh manis")) return [{ stockKeyword: "teh", qty: 0.05 }, { stockKeyword: "gula", qty: 0.025 }];
   if (name === "lontong sayur biasa") return [{ stockKeyword: "lontong", qty: 1 }];
   if (name === "lontong sayur telur") return [{ stockKeyword: "lontong", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
-  if (name.includes("bakwan goreng")) return [{ stockKeyword: "terigu", qty: 0.1 }]; // Potong 100gr terigu
-  if (name.includes("singkong goreng")) return [{ stockKeyword: "singkong", qty: 0.25 }]; // Potong 250gr singkong
-  if (name.includes("tempe mendoan")) return [{ stockKeyword: "tempe", qty: 0.5 }, { stockKeyword: "terigu", qty: 0.05 }]; // Potong setengah papan tempe + 50gr terigu
-  if (name.includes("air mineral")) return [{ stockKeyword: "air mineral", qty: 1 }]; // Potong 1 botol
+  if (name.includes("bakwan goreng")) return [{ stockKeyword: "terigu", qty: 0.1 }];
+  if (name.includes("singkong goreng")) return [{ stockKeyword: "singkong", qty: 0.25 }];
+  if (name.includes("tempe mendoan")) return [{ stockKeyword: "tempe", qty: 0.5 }, { stockKeyword: "terigu", qty: 0.05 }];
+  if (name.includes("air mineral")) return [{ stockKeyword: "air mineral", qty: 1 }];
 
-  // Untuk Wedang & Kopi belum dikurangi otomatis karena belum ada di INIT_STOCK, bisa ditambahkan nanti.
   return [];
 };
 
@@ -149,7 +151,7 @@ export default function RestaurantJoglo() {
   const [showPay, setShowPay] = useState(false);
   const [payMethod, setPayMethod] = useState("Tunai");
   const [cashIn, setCashIn] = useState("");
-  const [discount, setDiscount] = useState(""); // State baru untuk Diskon
+  const [discount, setDiscount] = useState("");
   const [orderType, setOrderType] = useState("Dine-in");
   const [orderNote, setOrderNote] = useState("");
 
@@ -158,7 +160,9 @@ export default function RestaurantJoglo() {
   const [showHistory, setShowHistory] = useState(false);
   const [menuModal, setMenuModal] = useState(null);
   const [stockModal, setStockModal] = useState(null);
-  const [menuForm, setMenuForm] = useState({});
+  
+  // State untuk form menu yang mendukung resep dinamis
+  const [menuForm, setMenuForm] = useState({ recipe: [] });
   const [stockForm, setStockForm] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth < 680);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -240,24 +244,23 @@ export default function RestaurantJoglo() {
     });
   }, []);
 
-  // ── KALKULASI KASIR: SUBTOTAL, DISKON, PAJAK, TOTAL ──
   const cartSubtotal = cart.reduce((s, c) => s + c.price * c.qty, 0);
   const cartQty = cart.reduce((s, c) => s + c.qty, 0);
-  
   const discountAmt = Number(discount) || 0;
   const cartTotal = Math.max(0, cartSubtotal - discountAmt);
-  // Pajak Tersembunyi (11% dari Total yang dibayar)
   const cartTax = cartTotal - (cartTotal / 1.11);
 
   const applyStockDiff = async (oldItems, newItems) => {
     const stockChanges = {}; 
     const aggregate = (items, isRevert) => {
       for (const item of items) {
-        const recipe = getRecipe(item.name);
+        // PERUBAHAN: Panggil getRecipe dengan full objek item
+        const recipe = getRecipe(item);
         for (const ing of recipe) {
-          const stockTarget = stock.find(s => (s.name || "").toLowerCase().includes(ing.stockKeyword));
+          if(!ing.stockKeyword) continue;
+          const stockTarget = stock.find(s => (s.name || "").toLowerCase().includes(ing.stockKeyword.toLowerCase()));
           if (stockTarget) {
-            const change = ing.qty * (item.qty || 1);
+            const change = (Number(ing.qty) || 0) * (item.qty || 1);
             if (!stockChanges[stockTarget.id]) {
               stockChanges[stockTarget.id] = { docId: stockTarget.id, current: stockTarget.quantity, diff: 0 };
             }
@@ -330,7 +333,7 @@ export default function RestaurantJoglo() {
     try {
       for (const m of menu) await deleteDoc(doc(db, "menu", m.id));
       for (const s of stock) await deleteDoc(doc(db, "stock", s.id));
-      for (const m of INIT_MENU) await addDoc(collection(db, "menu"), { name: m.name, category: m.category, price: m.price, icon: m.icon });
+      for (const m of INIT_MENU) await addDoc(collection(db, "menu"), m); // Save full object including recipe if any
       for (const s of INIT_STOCK) await addDoc(collection(db, "stock"), { name: s.name, unit: s.unit, quantity: s.quantity, minQty: s.minQty });
       alert("Selesai! Database berhasil di-reset.");
     } catch (e) {
@@ -445,20 +448,55 @@ export default function RestaurantJoglo() {
     });
   };
 
+  // --- FUNGSI KHUSUS MENU & RESEP ---
   const openMenuEdit = (item) => {
-    setMenuForm(item ? { ...item } : { name: "", category: "", price: "", icon: "🍽️" });
+    setMenuForm(item ? { ...item, recipe: item.recipe || [] } : { name: "", category: "", price: "", icon: "🍽️", recipe: [] });
     setMenuModal(item ? "edit" : "new");
+  };
+
+  const addRecipeRow = () => {
+    setMenuForm(p => ({ ...p, recipe: [...(p.recipe || []), { stockKeyword: "", qty: "" }] }));
+  };
+
+  const updateRecipeRow = (idx, field, val) => {
+    setMenuForm(p => {
+      const newRecipe = [...(p.recipe || [])];
+      newRecipe[idx][field] = field === "qty" ? (val) : val; // Simpan qty sebagai text/number sementara
+      return { ...p, recipe: newRecipe };
+    });
+  };
+
+  const removeRecipeRow = (idx) => {
+    setMenuForm(p => {
+      const newRecipe = [...(p.recipe || [])];
+      newRecipe.splice(idx, 1);
+      return { ...p, recipe: newRecipe };
+    });
   };
 
   const saveMenu = async () => {
     if (!menuForm.name || !menuForm.price) return;
-    const itemData = { name: menuForm.name, category: menuForm.category || "Umum", price: Number(menuForm.price), icon: menuForm.icon || "🍽️" };
+    
+    // Bersihkan resep kosong sebelum disimpan
+    const cleanRecipe = (menuForm.recipe || [])
+      .filter(r => r.stockKeyword.trim() !== "" && r.qty !== "")
+      .map(r => ({ stockKeyword: r.stockKeyword.trim(), qty: Number(r.qty) }));
+
+    const itemData = { 
+      name: menuForm.name, 
+      category: menuForm.category || "Umum", 
+      price: Number(menuForm.price), 
+      icon: menuForm.icon || "🍽️",
+      recipe: cleanRecipe
+    };
+    
     try {
       if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
       else await updateDoc(doc(db, "menu", menuForm.id), itemData);
       setMenuModal(null);
     } catch (e) { alert("Gagal menyimpan menu ke Cloud!"); }
   };
+  // ----------------------------------
 
   const openStockEdit = (item) => {
     setStockForm(item ? { ...item } : { name: "", unit: "", quantity: "", minQty: "" });
@@ -496,7 +534,6 @@ export default function RestaurantJoglo() {
     return true;
   });
 
-  // ── REKAP LAPORAN DENGAN DISKON & PAJAK ──
   const totalFilteredRev = filteredTxns.reduce((s, t) => s + (t.total || 0), 0);
   const totalFilteredDiscount = filteredTxns.reduce((s, t) => s + (t.discount || 0), 0);
   const totalFilteredTax = filteredTxns.reduce((s, t) => s + (t.tax !== undefined ? t.tax : ((t.total || 0) - ((t.total || 0) / 1.11))), 0);
@@ -783,7 +820,10 @@ export default function RestaurantJoglo() {
                 <div key={item.id} className="card" style={{ padding: ".8rem 1rem", display: "flex", alignItems: "center", gap: ".75rem" }}>
                   <span style={{ fontSize: "1.7rem" }}>{item.icon}</span>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: ".88rem", color: C.text }}>{item.name}</div>
+                    <div style={{ fontWeight: 600, fontSize: ".88rem", color: C.text }}>
+                      {item.name}
+                      {item.recipe && item.recipe.length > 0 && <span style={{ fontSize: ".65rem", color: C.green, marginLeft: "8px" }}>✓ Auto Stok</span>}
+                    </div>
                     <div style={{ display: "flex", gap: ".5rem", marginTop: ".2rem", flexWrap: "wrap", alignItems: "center" }}>
                       <span style={{ fontSize: ".7rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 99, padding: "1px 8px" }}>{item.category}</span>
                       <span style={{ fontSize: ".8rem", color: C.accent, fontWeight: 700 }}>{fmtRp(item.price)}</span>
@@ -829,7 +869,6 @@ export default function RestaurantJoglo() {
               </div>
             </div>
 
-            {/* ── KOTAK METRIK KEUANGAN BARU ── */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: ".75rem" }}>
               
               <div className="card" style={{ padding: "1.25rem" }}>
@@ -1038,7 +1077,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* ── Modal Pembayaran dengan Fitur Diskon & Meja ── */}
+      {/* Modal Pembayaran */}
       {showPay && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowPay(false)}>
           <div className="modal" style={{ maxHeight: "90vh", overflowY: "auto" }}>
@@ -1072,7 +1111,6 @@ export default function RestaurantJoglo() {
               ))}
               <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem" }}>
                 
-                {/* ── INPUT DISKON KASIR ── */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".5rem" }}>
                   <span style={{ fontSize: ".8rem", color: C.primaryMid, fontWeight: 600 }}>Diskon (Rp)</span>
                   <input className="inp" type="number" placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} 
@@ -1141,7 +1179,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* Receipt Modal + Print Area */}
+      {/* Receipt Modal */}
       {receipt && (
         <>
           <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setReceipt(null)}>
@@ -1276,7 +1314,7 @@ export default function RestaurantJoglo() {
         </>
       )}
 
-      {/* ── Modal Edit Transaksi ── */}
+      {/* Modal Edit Transaksi */}
       {txnEditModal === "edit" && txnForm.id && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setTxnEditModal(null)}>
           <div className="modal" style={{ maxWidth: 460, maxHeight: "90vh", overflowY: "auto" }}>
@@ -1364,7 +1402,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* ── Konfirmasi Hapus Transaksi Individual ── */}
+      {/* Konfirmasi Hapus Transaksi */}
       {confirmDelTxn && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setConfirmDelTxn(null)}>
           <div className="modal" style={{ maxWidth: 360, textAlign: "center" }}>
@@ -1376,43 +1414,64 @@ export default function RestaurantJoglo() {
             <div style={{ display: "flex", gap: ".5rem" }}>
               <button className="btn" onClick={() => setConfirmDelTxn(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
               <button className="btn" onClick={doDeleteTxn}
-                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus & Kembalikan Stok</button>
+                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus & Kembalikan</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Menu Edit Modal */}
+      {/* ── MODAL EDIT/TAMBAH MENU TERBARU (DENGAN RESEP) ── */}
       {menuModal && authUser.role === "owner" && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setMenuModal(null)}>
-          <div className="modal">
+          <div className="modal" style={{ maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: "1rem" }}>
-              {menuModal === "new" ? "+ Tambah Menu Baru" : "✏️ Edit Menu"}
+              {menuModal === "new" ? "+ Tambah Menu Baru" : "✏️ Edit Menu & Resep"}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: ".6rem" }}>
               <div>
                 <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Nama Menu *</label>
-                <input className="inp" placeholder="Contoh: Nasi Goreng Spesial" value={menuForm.name || ""} onChange={(e) => setMenuForm((p) => ({ ...p, name: e.target.value }))} />
+                <input className="inp" placeholder="Contoh: Es Jeruk" value={menuForm.name || ""} onChange={(e) => setMenuForm((p) => ({ ...p, name: e.target.value }))} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem" }}>
                 <div>
                   <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Kategori</label>
-                  <input className="inp" placeholder="Nasi / Lauk / Minuman" value={menuForm.category || ""} onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value }))} />
+                  <input className="inp" placeholder="Minuman" value={menuForm.category || ""} onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value }))} />
                 </div>
                 <div>
                   <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Ikon Emoji</label>
-                  <input className="inp" placeholder="🍽️" value={menuForm.icon || ""} onChange={(e) => setMenuForm((p) => ({ ...p, icon: e.target.value }))} />
+                  <input className="inp" placeholder="🍹" value={menuForm.icon || ""} onChange={(e) => setMenuForm((p) => ({ ...p, icon: e.target.value }))} />
                 </div>
               </div>
               <div>
                 <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Harga (Rp) *</label>
-                <input className="inp" type="number" placeholder="25000" value={menuForm.price || ""} onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))} />
+                <input className="inp" type="number" placeholder="10000" value={menuForm.price || ""} onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))} />
               </div>
+
+              {/* BLOK KHUSUS RESEP BAHAN */}
+              <div style={{ marginTop: ".75rem", borderTop: `1.5px dashed ${C.border}`, paddingTop: ".75rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".5rem" }}>
+                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600 }}>Resep Pemotong Stok (Opsional)</label>
+                  <button className="btn" onClick={addRecipeRow} style={{ background: C.greenBg, color: C.green, padding: ".25rem .5rem", borderRadius: 6, fontSize: ".7rem", fontWeight: 600 }}>+ Bahan</button>
+                </div>
+                
+                {(menuForm.recipe || []).map((r, idx) => (
+                  <div key={idx} style={{ display: "flex", gap: ".4rem", marginBottom: ".4rem" }}>
+                    <input className="inp" placeholder="Nama Stok (misal: gula)" value={r.stockKeyword} onChange={(e) => updateRecipeRow(idx, "stockKeyword", e.target.value)} style={{ flex: 2, padding: ".4rem", fontSize: ".75rem" }} />
+                    <input className="inp" type="number" placeholder="Qty" value={r.qty} onChange={(e) => updateRecipeRow(idx, "qty", e.target.value)} style={{ flex: 1, padding: ".4rem", fontSize: ".75rem" }} />
+                    <button className="btn" onClick={() => removeRecipeRow(idx)} style={{ background: C.redBg, color: C.red, width: 32, borderRadius: 6 }}>×</button>
+                  </div>
+                ))}
+                
+                <div style={{ fontSize: ".65rem", color: C.textMuted, marginTop: ".3rem", lineHeight: 1.3 }}>
+                  *Jika diisi, stok akan otomatis terpotong saat menu ini dibeli. Pastikan <b>Nama Stok</b> persis sama dengan nama bahan di tab Stok. Contoh Qty: 0.15 (artinya 150 gram).
+                </div>
+              </div>
+
             </div>
             <div style={{ display: "flex", gap: ".5rem", marginTop: "1.25rem" }}>
               <button className="btn" onClick={() => setMenuModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
               <button className="btn" onClick={saveMenu} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>
-                {menuModal === "new" ? "+ Tambahkan" : "✅ Simpan"}
+                {menuModal === "new" ? "+ Tambahkan Menu" : "✅ Simpan Menu"}
               </button>
             </div>
           </div>
@@ -1474,7 +1533,7 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* ── MODAL RIWAYAT KHUSUS KASIR ── */}
+      {/* Modal Riwayat Transaksi */}
       {showHistory && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowHistory(false)}>
           <div className="modal" style={{ maxWidth: 450, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
