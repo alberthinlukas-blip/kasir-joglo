@@ -61,14 +61,11 @@ const INIT_STOCK = [
   { id: "s16", name: "Air Mineral Botol", unit: "botol", quantity: 48, minQty: 12 }
 ];
 
-// LOGIKA RESEP SEKARANG DINAMIS!
 const getRecipe = (item) => {
-  // 1. Jika menu memiliki resep buatan dari web app, pakai resep itu!
   if (item && item.recipe && Array.isArray(item.recipe) && item.recipe.length > 0) {
     return item.recipe;
   }
   
-  // 2. Jika tidak ada resep dinamis, pakai fallback bawaan sistem lama
   const name = (item.name || "").toLowerCase();
   if (name.includes("mie nyemek")) return [{ stockKeyword: "mie instan", qty: 1 }, { stockKeyword: "telur", qty: 1 }];
   if (name.includes("nasi goreng")) return [{ stockKeyword: "beras", qty: 0.2 }, { stockKeyword: "telur", qty: 1 }];
@@ -137,6 +134,10 @@ const styles = `
 `;
 
 export default function RestaurantJoglo() {
+  // Deteksi parameter meja di URL (contoh: ?table=1)
+  const urlParams = new URLSearchParams(window.location.search);
+  const tableParam = urlParams.get("table");
+
   const [authUser, setAuthUser] = useState(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
 
@@ -144,6 +145,7 @@ export default function RestaurantJoglo() {
   const [menu, setMenu] = useState([]);
   const [stock, setStock] = useState([]);
   const [txns, setTxns] = useState([]);
+  const [incomingOrders, setIncomingOrders] = useState([]); // State untuk pesanan masuk dari HP pelanggan
   const [cart, setCart] = useState([]);
   const [catFilter, setCatFilter] = useState("Semua");
   const [search, setSearch] = useState("");
@@ -160,8 +162,9 @@ export default function RestaurantJoglo() {
   const [showHistory, setShowHistory] = useState(false);
   const [menuModal, setMenuModal] = useState(null);
   const [stockModal, setStockModal] = useState(null);
+  const [customerName, setCustomerName] = useState(""); // Nama pemesan dari HP
+  const [orderSuccess, setOrderSuccess] = useState(false);
   
-  // State untuk form menu yang mendukung resep dinamis
   const [menuForm, setMenuForm] = useState({ recipe: [] });
   const [stockForm, setStockForm] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth < 680);
@@ -198,17 +201,23 @@ export default function RestaurantJoglo() {
       setTxns(validData);
     });
 
+    const unsubIncoming = onSnapshot(collection(db, "incomingOrders"), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setIncomingOrders(data);
+    });
+
     const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })); // Posisi id digeser ke belakang
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
       setMenu(data.length > 0 ? data : INIT_MENU);
     });
 
     const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })); // Posisi id digeser ke belakang
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
       setStock(data.length > 0 ? data : INIT_STOCK);
     });
 
-    return () => { unsubTxns(); unsubMenu(); unsubStock(); };
+    return () => { unsubTxns(); unsubIncoming(); unsubMenu(); unsubStock(); };
   }, []);
 
   useEffect(() => {
@@ -254,7 +263,6 @@ export default function RestaurantJoglo() {
     const stockChanges = {}; 
     const aggregate = (items, isRevert) => {
       for (const item of items) {
-        // PERUBAHAN: Panggil getRecipe dengan full objek item
         const recipe = getRecipe(item);
         for (const ing of recipe) {
           if(!ing.stockKeyword) continue;
@@ -295,7 +303,7 @@ export default function RestaurantJoglo() {
       method: payMethod,
       cash: payMethod === "Tunai" ? Number(cashIn) : cartTotal,
       change: payMethod === "Tunai" ? Number(cashIn) - cartTotal : 0,
-      cashier: authUser.username,
+      cashier: authUser ? authUser.username : "Self-Order Pelanggan",
       orderType: orderType,
       orderNote: orderNote
     };
@@ -318,6 +326,60 @@ export default function RestaurantJoglo() {
     }
   };
 
+  // Fungsi khusus pelanggan mengirim pesanan sendiri dari HP via QR Code Meja
+  const submitCustomerOrder = async () => {
+    if (!cart.length) return;
+    if (!customerName.trim()) {
+      alert("Mohon masukkan nama pemesan terlebih dahulu!");
+      return;
+    }
+
+    const orderData = {
+      tableNo: tableParam,
+      customerName: customerName.trim(),
+      date: new Date().toISOString(),
+      items: [...cart],
+      subtotal: cartSubtotal,
+      total: cartTotal,
+      status: "pending"
+    };
+
+    try {
+      await addDoc(collection(db, "incomingOrders"), orderData);
+      setOrderSuccess(true);
+      setCart([]);
+    } catch (e) {
+      alert("Gagal mengirim pesanan. Coba lagi!");
+      console.error(e);
+    }
+  };
+
+  // Fungsi kasir menerima pesanan masuk dari pelanggan dan langsung memasukkannya ke kasir/transaksi
+  const acceptIncomingOrder = async (order) => {
+    try {
+      setCart(order.items);
+      setOrderType("Dine-in");
+      setOrderNote(`Meja ${order.tableNo} (${order.customerName})`);
+      
+      // Hapus dari daftar incomingOrders agar notifikasi hilang
+      await deleteDoc(doc(db, "incomingOrders", order.id));
+      setTab("kasir");
+      setShowPay(true); // Langsung buka pop-up pembayaran di kasir
+    } catch (e) {
+      alert("Gagal memproses pesanan masuk.");
+      console.error(e);
+    }
+  };
+
+  const rejectIncomingOrder = async (orderId) => {
+    if (!window.confirm("Yakin ingin menolak/menghapus pesanan ini?")) return;
+    try {
+      await deleteDoc(doc(db, "incomingOrders", orderId));
+    } catch (e) {
+      alert("Gagal menghapus pesanan.");
+    }
+  };
+
   const handlePrintAndClose = () => {
     window.onafterprint = () => {
       setReceipt(null);
@@ -335,7 +397,7 @@ export default function RestaurantJoglo() {
       for (const s of stock) await deleteDoc(doc(db, "stock", s.id));
       
       for (const m of INIT_MENU) {
-        const { id, ...menuData } = m; // Buang id bawaan VS Code
+        const { id, ...menuData } = m; 
         await addDoc(collection(db, "menu"), menuData); 
       }
       for (const s of INIT_STOCK) {
@@ -455,7 +517,6 @@ export default function RestaurantJoglo() {
     });
   };
 
-  // --- FUNGSI KHUSUS MENU & RESEP ---
   const openMenuEdit = (item) => {
     setMenuForm(item ? { ...item, recipe: item.recipe || [] } : { name: "", category: "", price: "", icon: "🍽️", recipe: [] });
     setMenuModal(item ? "edit" : "new");
@@ -468,7 +529,7 @@ export default function RestaurantJoglo() {
   const updateRecipeRow = (idx, field, val) => {
     setMenuForm(p => {
       const newRecipe = [...(p.recipe || [])];
-      newRecipe[idx][field] = field === "qty" ? (val) : val; // Simpan qty sebagai text/number sementara
+      newRecipe[idx][field] = val;
       return { ...p, recipe: newRecipe };
     });
   };
@@ -483,8 +544,6 @@ export default function RestaurantJoglo() {
 
   const saveMenu = async () => {
     if (!menuForm.name || !menuForm.price) return;
-
-    // Bersihkan resep kosong sebelum disimpan
     const cleanRecipe = (menuForm.recipe || [])
       .filter(r => r.stockKeyword && r.stockKeyword.trim() !== "" && r.qty !== "")
       .map(r => ({ stockKeyword: r.stockKeyword.trim(), qty: Number(r.qty) }));
@@ -506,7 +565,6 @@ export default function RestaurantJoglo() {
       console.error(e);
     }
   };
-  // ----------------------------------
 
   const openStockEdit = (item) => {
     setStockForm(item ? { ...item } : { name: "", unit: "", quantity: "", minQty: "" });
@@ -548,12 +606,6 @@ export default function RestaurantJoglo() {
   const totalFilteredDiscount = filteredTxns.reduce((s, t) => s + (t.discount || 0), 0);
   const totalFilteredTax = filteredTxns.reduce((s, t) => s + (t.tax !== undefined ? t.tax : ((t.total || 0) - ((t.total || 0) / 1.11))), 0);
   const netRevenue = totalFilteredRev - totalFilteredTax;
-
-  const breakdown = filteredTxns.reduce((acc, t) => {
-    const mthd = t.method || "Tunai";
-    acc[mthd] = (acc[mthd] || 0) + (t.total || 0);
-    return acc;
-  }, { Tunai: 0, QRIS: 0, Kartu: 0 });
 
   const itemSales = {};
   filteredTxns.forEach(tx => {
@@ -620,6 +672,96 @@ export default function RestaurantJoglo() {
   const txnFormTotal = Math.max(0, txnFormSubtotal - txnFormDiscount);
   const txnFormChange = txnForm.method === "Tunai" ? Number(txnForm.cash || 0) - txnFormTotal : 0;
 
+  // ──────────────────────────────────────────────
+  // TAMPILAN KHUSUS PELANGGAN (SELF-ORDER VIA QR CODE)
+  // ──────────────────────────────────────────────
+  if (tableParam) {
+    return (
+      <div style={{ fontFamily: "'Source Serif 4',Georgia,serif", background: C.bg, minHeight: "100vh", color: C.text, paddingBottom: "3rem" }}>
+        <style>{styles}</style>
+        
+        {/* Header Pelanggan */}
+        <header style={{ background: C.primary, padding: "1rem", textAlign: "center", position: "sticky", top: 0, zIndex: 50, boxShadow: "0 2px 10px rgba(0,0,0,.2)" }}>
+          <div style={{ fontFamily: "'Playfair Display',serif", color: C.accentLight, fontSize: "1.2rem", fontWeight: 700 }}>Joglo Kresna</div>
+          <div style={{ color: "#FFD98A", fontSize: ".8rem", fontWeight: 600, marginTop: "2px" }}>📍 Menu Digital Pelanggan — Meja {tableParam}</div>
+        </header>
+
+        <main style={{ padding: "1rem", maxWidth: 600, margin: "0 auto" }}>
+          {orderSuccess ? (
+            <div className="card" style={{ padding: "2.5rem 1.5rem", textAlign: "center", marginTop: "2rem" }}>
+              <div style={{ fontSize: "3.5rem", marginBottom: ".75rem" }}>🎉</div>
+              <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", color: C.primary, fontWeight: 700, marginBottom: ".5rem" }}>Pesanan Berhasil Dikirim!</div>
+              <div style={{ fontSize: ".85rem", color: C.textLight, marginBottom: "1.5rem", lineHeight: 1.5 }}>
+                Terima kasih, pesanan untuk <strong>Meja {tableParam}</strong> sudah masuk ke kasir. Mohon tunggu sebentar, hidangan akan segera disiapkan!
+              </div>
+              <button className="btn" onClick={() => setOrderSuccess(false)}
+                style={{ background: C.accent, color: "white", padding: ".7rem 1.5rem", borderRadius: 9, fontSize: ".9rem", fontWeight: 700 }}>
+                Pesan Menu Lainnya
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Filter Kategori */}
+              <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap", marginBottom: "1rem", overflowX: "auto", paddingBottom: ".3rem" }}>
+                {categories.map((c) => (
+                  <button key={c} className="pill" onClick={() => setCatFilter(c)}
+                    style={{ padding: ".35rem .8rem", borderRadius: 99, fontSize: ".78rem", background: catFilter === c ? C.accent : "#E8D5B7", color: catFilter === c ? "white" : C.primaryMid, fontWeight: catFilter === c ? 600 : 400 }}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+
+              {/* Grid Menu Pelanggan */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: ".75rem", marginBottom: "6rem" }}>
+                {filteredMenu.map((item) => {
+                  const inCart = cart.find((c) => c.id === item.id);
+                  return (
+                    <div key={item.id} className="menu-tile card" onClick={() => addToCart(item)}
+                      style={{ padding: "1rem .75rem", position: "relative", background: inCart ? "#FFF3DC" : C.surface, border: `1.5px solid ${inCart ? C.accent : C.borderLight}` }}>
+                      {inCart && (
+                        <span style={{ position: "absolute", top: 8, right: 8, background: C.accent, color: "white", borderRadius: 99, fontSize: ".68rem", fontWeight: 700, padding: "2px 7px" }}>{inCart.qty}</span>
+                      )}
+                      <div style={{ fontSize: "2.5rem", textAlign: "center", marginBottom: ".5rem" }}>{item.icon}</div>
+                      <div style={{ fontSize: ".85rem", fontWeight: 600, color: C.text, lineHeight: 1.3, marginBottom: ".3rem", textAlign: "center" }}>{item.name}</div>
+                      <div style={{ fontSize: ".8rem", color: C.accent, fontWeight: 700, textAlign: "center" }}>{fmtRp(item.price)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Bar Keranjang Pelanggan di Bawah */}
+              {cartQty > 0 && (
+                <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.surface, borderTop: `2px solid ${C.border}`, padding: "1rem", boxShadow: "0 -4px 20px rgba(0,0,0,.1)", zIndex: 99 }}>
+                  <div style={{ maxWidth: 600, margin: "0 auto" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".5rem", alignItems: "center" }}>
+                      <span style={{ fontSize: ".85rem", color: C.primaryMid, fontWeight: 600 }}>Total Keranjang ({cartQty} item)</span>
+                      <span style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.1rem", fontWeight: 700, color: C.accent }}>{fmtRp(cartSubtotal)}</span>
+                    </div>
+
+                    <div style={{ marginBottom: ".6rem" }}>
+                      <input className="inp" required placeholder="Nama Pemesan (Wajib diisi, contoh: Kak Rina)" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+                    </div>
+
+                    <div style={{ display: "flex", gap: ".5rem" }}>
+                      <button className="btn" onClick={() => setCart([])} style={{ padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 9, fontSize: ".8rem" }}>🗑️ Batal</button>
+                      <button className="btn" onClick={submitCustomerOrder}
+                        style={{ flex: 1, padding: ".6rem", background: C.green, color: "white", borderRadius: 9, fontFamily: "'Playfair Display',serif", fontSize: ".95rem", fontWeight: 700 }}>
+                        🚀 Kirim Pesanan ke Kasir
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  // ──────────────────────────────────────────────
+  // TAMPILAN UTAMA KASIR / OWNER (LOGIN REQUIRED)
+  // ──────────────────────────────────────────────
   const CartPanel = ({ asModal = false }) => (
     <div className={asModal ? "" : "card"} style={{
       background: C.surface, borderRadius: asModal ? 18 : 14, padding: "1rem",
@@ -698,7 +840,7 @@ export default function RestaurantJoglo() {
               <label style={{ fontSize: ".75rem", fontWeight: 600, color: C.primaryMid, marginBottom: ".3rem", display: "block" }}>Password / PIN</label>
               <input required className="inp" type="password" placeholder="••••••" value={loginForm.password} onChange={(e) => setLoginForm(p => ({ ...p, password: e.target.value }))} />
             </div>
-            <button type="submit" className="btn" style={{ background: C.accent, color: "white", padding: ".85rem", borderRadius: 9, fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", fontWeight: 700, marginTop: "1rem" }}>
+            <button type="submit" className="btn" style={{ background: C.accent, color: "white", padding: ".85rem", borderRadius: 9, fontFamily: "'Playfair Display',serif", fontSize: ".1.05rem", fontWeight: 700, marginTop: "1rem" }}>
               Buka Mesin Kasir
             </button>
           </form>
@@ -757,55 +899,94 @@ export default function RestaurantJoglo() {
 
         {/* TAB KASIR */}
         {tab === "kasir" && (
-          <div className="no-print" style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 310px", gap: "1rem", alignItems: "start" }}>
-            <div>
-              <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginBottom: ".75rem" }}>
-                <input className="inp" placeholder="🔍 Cari menu…" value={search} onChange={(e) => setSearch(e.target.value)}
-                  style={{ flex: 1, minWidth: 140, maxWidth: 240 }} />
-                
-                <button className="btn" onClick={() => setShowHistory(true)}
-                  style={{ padding: ".4rem .8rem", background: "white", border: `1.5px solid ${C.border}`, borderRadius: 9, fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "flex", alignItems: "center", gap: ".4rem" }}>
-                  🕒 Riwayat Transaksi
-                </button>
-
-                <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
-                  {categories.map((c) => (
-                    <button key={c} className="pill" onClick={() => setCatFilter(c)}
-                      style={{ padding: ".3rem .7rem", borderRadius: 99, fontSize: ".75rem", background: catFilter === c ? C.accent : "#E8D5B7", color: catFilter === c ? "white" : C.primaryMid, fontWeight: catFilter === c ? 600 : 400 }}>
-                      {c}
-                    </button>
+          <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            
+            {/* NOTIFIKASI PESANAN MASUK DARI PELANGGAN */}
+            {incomingOrders.length > 0 && (
+              <div style={{ background: "#FEF9E7", border: `2px solid ${C.accent}`, borderRadius: 12, padding: "1rem" }}>
+                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1rem", color: C.primary, fontWeight: 700, marginBottom: ".5rem", display: "flex", alignItems: "center", gap: ".5rem" }}>
+                  🔔 Ada {incomingOrders.length} Pesanan Masuk dari Meja Pelanggan!
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+                  {incomingOrders.map(ord => (
+                    <div key={ord.id} style={{ background: "white", padding: ".75rem", borderRadius: 9, display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${C.borderLight}` }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: ".85rem", color: C.primary }}>
+                          Meja {ord.tableNo} — Pemesan: {ord.customerName}
+                        </div>
+                        <div style={{ fontSize: ".75rem", color: C.textLight, marginTop: ".1rem" }}>
+                          {ord.items.map(i => `${i.name} (x${i.qty})`).join(", ")}
+                        </div>
+                        <div style={{ fontSize: ".78rem", color: C.accent, fontWeight: 700, marginTop: ".2rem" }}>
+                          Total: {fmtRp(ord.total)}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: ".4rem" }}>
+                        <button className="btn" onClick={() => acceptIncomingOrder(ord)}
+                          style={{ background: C.green, color: "white", padding: ".4rem .8rem", borderRadius: 7, fontSize: ".78rem", fontWeight: 700 }}>
+                          ✅ Terima & Bayar
+                        </button>
+                        <button className="btn" onClick={() => rejectIncomingOrder(ord.id)}
+                          style={{ background: C.redBg, color: C.red, padding: ".4rem .6rem", borderRadius: 7, fontSize: ".78rem" }}>
+                          ❌ Tolak
+                        </button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: ".6rem" }}>
-                {filteredMenu.map((item) => {
-                  const inCart = cart.find((c) => c.id === item.id);
-                  return (
-                    <div key={item.id} className="menu-tile card" onClick={() => addToCart(item)}
-                      style={{ padding: ".85rem .7rem", position: "relative", background: inCart ? "#FFF3DC" : C.surface, border: `1px solid ${inCart ? C.accent : C.borderLight}` }}>
-                      {inCart && (
-                        <span style={{ position: "absolute", top: 6, right: 6, background: C.accent, color: "white", borderRadius: 99, fontSize: ".62rem", fontWeight: 700, padding: "1px 6px" }}>{inCart.qty}</span>
-                      )}
-                      <div style={{ fontSize: "2rem", textAlign: "center", marginBottom: ".4rem" }}>{item.icon}</div>
-                      <div style={{ fontSize: ".78rem", fontWeight: 600, color: C.text, lineHeight: 1.3, marginBottom: ".25rem", textAlign: "center" }}>{item.name}</div>
-                      <div style={{ fontSize: ".72rem", color: C.accent, fontWeight: 700, textAlign: "center" }}>{fmtRp(item.price)}</div>
-                      <div style={{ fontSize: ".62rem", color: C.textMuted, textAlign: "center" }}>{item.category}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {!isMobile && <CartPanel />}
-
-            {isMobile && cartQty > 0 && (
-              <button className="btn" onClick={() => setShowCart(true)}
-                style={{ position: "fixed", bottom: "1.5rem", right: "1.5rem", background: C.accent, color: "white", borderRadius: 99, padding: ".65rem 1.2rem", fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700, zIndex: 90, boxShadow: "0 4px 20px rgba(200,134,10,.45)", display: "flex", alignItems: "center", gap: ".5rem" }}>
-                🧾 Keranjang · {cartQty}
-                <span style={{ fontWeight: 400, fontSize: ".78rem" }}>{fmtRp(cartSubtotal)}</span>
-              </button>
             )}
+
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 310px", gap: "1rem", alignItems: "start" }}>
+              <div>
+                <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginBottom: ".75rem" }}>
+                  <input className="inp" placeholder="🔍 Cari menu…" value={search} onChange={(e) => setSearch(e.target.value)}
+                    style={{ flex: 1, minWidth: 140, maxWidth: 240 }} />
+                  
+                  <button className="btn" onClick={() => setShowHistory(true)}
+                    style={{ padding: ".4rem .8rem", background: "white", border: `1.5px solid ${C.border}`, borderRadius: 9, fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "flex", alignItems: "center", gap: ".4rem" }}>
+                    🕒 Riwayat Transaksi
+                  </button>
+
+                  <div style={{ display: "flex", gap: ".35rem", flexWrap: "wrap" }}>
+                    {categories.map((c) => (
+                      <button key={c} className="pill" onClick={() => setCatFilter(c)}
+                        style={{ padding: ".3rem .7rem", borderRadius: 99, fontSize: ".75rem", background: catFilter === c ? C.accent : "#E8D5B7", color: catFilter === c ? "white" : C.primaryMid, fontWeight: catFilter === c ? 600 : 400 }}>
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: ".6rem" }}>
+                  {filteredMenu.map((item) => {
+                    const inCart = cart.find((c) => c.id === item.id);
+                    return (
+                      <div key={item.id} className="menu-tile card" onClick={() => addToCart(item)}
+                        style={{ padding: ".85rem .7rem", position: "relative", background: inCart ? "#FFF3DC" : C.surface, border: `1px solid ${inCart ? C.accent : C.borderLight}` }}>
+                        {inCart && (
+                          <span style={{ position: "absolute", top: 6, right: 6, background: C.accent, color: "white", borderRadius: 99, fontSize: ".62rem", fontWeight: 700, padding: "1px 6px" }}>{inCart.qty}</span>
+                        )}
+                        <div style={{ fontSize: "2rem", textAlign: "center", marginBottom: ".4rem" }}>{item.icon}</div>
+                        <div style={{ fontSize: ".78rem", fontWeight: 600, color: C.text, lineHeight: 1.3, marginBottom: ".25rem", textAlign: "center" }}>{item.name}</div>
+                        <div style={{ fontSize: ".72rem", color: C.accent, fontWeight: 700, textAlign: "center" }}>{fmtRp(item.price)}</div>
+                        <div style={{ fontSize: ".62rem", color: C.textMuted, textAlign: "center" }}>{item.category}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {!isMobile && <CartPanel />}
+
+              {isMobile && cartQty > 0 && (
+                <button className="btn" onClick={() => setShowCart(true)}
+                  style={{ position: "fixed", bottom: "1.5rem", right: "1.5rem", background: C.accent, color: "white", borderRadius: 99, padding: ".65rem 1.2rem", fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700, zIndex: 90, boxShadow: "0 4px 20px rgba(200,134,10,.45)", display: "flex", alignItems: "center", gap: ".5rem" }}>
+                  🧾 Keranjang · {cartQty}
+                  <span style={{ fontWeight: 400, fontSize: ".78rem" }}>{fmtRp(cartSubtotal)}</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -851,7 +1032,7 @@ export default function RestaurantJoglo() {
           </div>
         )}
 
-        {/* TAB LAPORAN DENGAN PERHITUNGAN PAJAK */}
+        {/* TAB LAPORAN */}
         {tab === "laporan" && authUser.role === "owner" && (
           <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
 
@@ -880,35 +1061,30 @@ export default function RestaurantJoglo() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: ".75rem" }}>
-              
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💰</div>
                 <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Omzet Kotor (Gross)</div>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.primary }}>{fmtRp(totalFilteredRev)}</div>
                 <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>Dari {filteredTxns.length} transaksi</div>
               </div>
-
               <div className="card" style={{ padding: "1.25rem", background: C.blueBg, borderColor: "#D4E6F1" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💎</div>
                 <div style={{ fontSize: ".7rem", color: C.blue, marginBottom: ".15rem", fontWeight: 600 }}>Pendapatan Bersih (Netto)</div>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.blue }}>{fmtRp(netRevenue)}</div>
                 <div style={{ fontSize: ".7rem", color: C.blue, marginTop: ".2rem", opacity: 0.8 }}>Uang asli milik resto</div>
               </div>
-
               <div className="card" style={{ padding: "1.25rem", background: C.redBg, borderColor: "#F5B7B1" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>🏛️</div>
                 <div style={{ fontSize: ".7rem", color: C.red, marginBottom: ".15rem", fontWeight: 600 }}>Pajak PPN (11%) Disimpan</div>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.red }}>{fmtRp(totalFilteredTax)}</div>
                 <div style={{ fontSize: ".7rem", color: C.red, marginTop: ".2rem", opacity: 0.8 }}>Siap disetor ke negara</div>
               </div>
-
               <div className="card" style={{ padding: "1.25rem" }}>
                 <div style={{ fontSize: "1.5rem", marginBottom: ".4rem" }}>💸</div>
                 <div style={{ fontSize: ".7rem", color: C.textLight, marginBottom: ".15rem" }}>Total Diskon Diberikan</div>
                 <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.3rem", fontWeight: 700, color: C.accent }}>{fmtRp(totalFilteredDiscount)}</div>
                 <div style={{ fontSize: ".7rem", color: C.textMuted, marginTop: ".2rem" }}>Biaya promosi/potongan</div>
               </div>
-
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1.2fr", gap: "1rem" }}>
@@ -998,11 +1174,6 @@ export default function RestaurantJoglo() {
                       </div>
                     );
                   })}
-                  {filteredTxns.length > 30 && (
-                    <div style={{ textAlign: "center", fontSize: ".75rem", color: C.textMuted, padding: ".5rem" }}>
-                      Menampilkan 30 dari {filteredTxns.length} transaksi. Gunakan filter tanggal untuk mempersempit.
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1070,11 +1241,7 @@ export default function RestaurantJoglo() {
         )}
       </main>
 
-      {/* ═══════════════════════════════════════
-         MODALS & POP-UPS
-      ═══════════════════════════════════════ */}
-
-      {/* Mobile Cart */}
+      {/* MODALS */}
       {isMobile && showCart && (
         <div className="overlay" onClick={(e) => e.target === e.currentTarget && setShowCart(false)}>
           <div style={{ background: C.surface, borderRadius: 18, padding: "1.25rem", width: "100%", maxWidth: 400, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -1087,7 +1254,6 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* Modal Pembayaran */}
       {showPay && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowPay(false)}>
           <div className="modal" style={{ maxHeight: "90vh", overflowY: "auto" }}>
@@ -1097,7 +1263,7 @@ export default function RestaurantJoglo() {
               <div style={{ fontSize: ".8rem", color: C.primaryMid, marginBottom: ".45rem", fontWeight: 600 }}>Tipe Pesanan</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: ".4rem", marginBottom: ".5rem" }}>
                 {[["Dine-in", "🍽️"], ["Takeaway", "🛍️"], ["Online", "🛵"]].map(([type, icon]) => (
-                  <button key={type} className="btn" onClick={() => { setOrderType(type); setOrderNote(""); }}
+                  <button key={type} className="btn" onClick={() => { setOrderType(type); }}
                     style={{ padding: ".55rem .2rem", border: `2px solid ${orderType === type ? C.accent : C.border}`, borderRadius: 9, background: orderType === type ? "#FFF3DC" : "white", color: orderType === type ? C.accent : C.primaryMid, fontSize: ".75rem", fontWeight: orderType === type ? 600 : 400, display: "flex", flexDirection: "column", alignItems: "center", gap: ".2rem" }}>
                     <span style={{ fontSize: "1.2rem" }}>{icon}</span> {type}
                   </button>
@@ -1109,7 +1275,6 @@ export default function RestaurantJoglo() {
                 value={orderNote} onChange={(e) => setOrderNote(e.target.value)} 
                 style={{ border: (!orderNote && orderType !== "Dine-in") ? `1.5px solid ${C.red}` : `1.5px solid ${C.border}` }}
               />
-              {orderType !== "Dine-in" && !orderNote && <div style={{ fontSize: ".65rem", color: C.red, marginTop: ".2rem" }}>*Keterangan ini wajib diisi</div>}
             </div>
 
             <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", fontSize: ".8rem" }}>
@@ -1120,13 +1285,11 @@ export default function RestaurantJoglo() {
                 </div>
               ))}
               <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem" }}>
-                
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".5rem" }}>
                   <span style={{ fontSize: ".8rem", color: C.primaryMid, fontWeight: 600 }}>Diskon (Rp)</span>
                   <input className="inp" type="number" placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} 
                     style={{ width: 100, padding: ".3rem .5rem", textAlign: "right" }} />
                 </div>
-
                 {discountAmt > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.red, marginBottom: ".2rem", fontWeight: 600 }}>
                     <span>Potongan Diskon</span><span>-{fmtRp(discountAmt)}</span>
@@ -1160,20 +1323,6 @@ export default function RestaurantJoglo() {
                     Kembalian: {fmtRp(Number(cashIn) - cartTotal)}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: ".35rem", marginTop: ".5rem", flexWrap: "wrap" }}>
-                  {[...new Set([cartTotal, 50000, 100000, 200000])].sort((a, b) => a - b).map((v) => (
-                    <button key={v} className="btn" onClick={() => setCashIn(String(v))}
-                      style={{ padding: ".28rem .55rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 7, fontSize: ".72rem" }}>
-                      {v === cartTotal ? "Pas · " : ""}{fmtRp(v)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {payMethod !== "Tunai" && (
-              <div style={{ background: C.blueBg, borderRadius: 9, padding: ".65rem", marginBottom: "1rem", fontSize: ".8rem", color: C.blue, textAlign: "center" }}>
-                {payMethod === "QRIS" ? "📱 Tunjukkan QR Code kepada pelanggan" : "💳 Proses kartu di mesin EDC"}
               </div>
             )}
 
@@ -1189,7 +1338,6 @@ export default function RestaurantJoglo() {
         </div>
       )}
 
-      {/* Receipt Modal */}
       {receipt && (
         <>
           <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setReceipt(null)}>
@@ -1199,8 +1347,7 @@ export default function RestaurantJoglo() {
               <div style={{ fontSize: ".75rem", color: C.textMuted, marginBottom: ".4rem" }}>{receipt.no} · {fmtDate(receipt.date)}</div>
               
               <div style={{ display: "inline-block", background: "#E8D5B7", color: C.primaryMid, padding: ".3rem .8rem", borderRadius: 99, fontSize: ".75rem", fontWeight: 600, marginBottom: "1rem" }}>
-                {receipt.orderType === "Dine-in" ? "🍽️ Makan di Tempat" : receipt.orderType === "Takeaway" ? "🛍️ Bungkus" : "🛵 Online"} 
-                {receipt.orderNote && ` • ${receipt.orderNote}`}
+                {receipt.orderType} {receipt.orderNote && `• ${receipt.orderNote}`}
               </div>
 
               <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".75rem", marginBottom: "1rem", textAlign: "left" }}>
@@ -1211,45 +1358,17 @@ export default function RestaurantJoglo() {
                   </div>
                 ))}
                 <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".5rem", paddingTop: ".5rem" }}>
-                  
-                  {receipt.discount > 0 && (
-                     <>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.textMid, marginBottom: ".2rem" }}>
-                           <span>Subtotal</span><span>{fmtRp(receipt.subtotal)}</span>
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.red, marginBottom: ".2rem", fontWeight: 600 }}>
-                           <span>Diskon</span><span>-{fmtRp(receipt.discount)}</span>
-                        </div>
-                     </>
-                  )}
-
                   <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: ".88rem" }}>
                     <span>Total Bayar</span><span style={{ color: C.accent }}>{fmtRp(receipt.total)}</span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".78rem", color: C.textLight, marginTop: ".2rem" }}>
-                    <span>Bayar ({receipt.method})</span><span>{fmtRp(receipt.cash)}</span>
-                  </div>
-                  {receipt.method === "Tunai" && (
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: ".82rem", color: C.green, fontWeight: 600 }}>
-                      <span>Kembalian</span><span>{fmtRp(receipt.change)}</span>
-                    </div>
-                  )}
                 </div>
-              </div>
-
-              <div style={{ fontSize: ".7rem", color: C.textMuted, marginBottom: "1rem", fontStyle: "italic", background: "#F0E0C0", padding: ".4rem", borderRadius: 8 }}>
-                *Harga sudah termasuk Pajak Restoran (11%)
               </div>
 
               <div style={{ display: "flex", gap: ".5rem" }}>
                 <button className="btn" onClick={() => setReceipt(null)}
-                  style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10, fontWeight: 600 }}>
-                  Tutup
-                </button>
+                  style={{ flex: 1, padding: ".65rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10, fontWeight: 600 }}>Tutup</button>
                 <button className="btn" onClick={handlePrintAndClose}
-                  style={{ flex: 2, padding: ".65rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700 }}>
-                  🖨️ Cetak
-                </button>
+                  style={{ flex: 2, padding: ".65rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".9rem", fontWeight: 700 }}>🖨️ Cetak</button>
               </div>
             </div>
           </div>
@@ -1286,40 +1405,10 @@ export default function RestaurantJoglo() {
               </tbody>
             </table>
             <div className="garis-putus"></div>
-            
-            {receipt.discount > 0 && (
-               <>
-                  <div className="print-flex" style={{ fontSize: "14px" }}>
-                     <span>Subtotal:</span>
-                     <span>{fmtRp(receipt.subtotal)}</span>
-                  </div>
-                  <div className="print-flex" style={{ fontSize: "14px" }}>
-                     <span>Diskon:</span>
-                     <span>-{fmtRp(receipt.discount)}</span>
-                  </div>
-                  <div className="garis-putus"></div>
-               </>
-            )}
-
             <div className="print-flex" style={{ fontWeight: "bold", fontSize: "16px" }}>
               <span>TOTAL BAYAR:</span>
               <span>{fmtRp(receipt.total)}</span>
             </div>
-            <div className="garis-putus"></div>
-            <div className="print-flex">
-              <span>{receipt.method}:</span>
-              <span>{fmtRp(receipt.cash)}</span>
-            </div>
-            {receipt.method === "Tunai" && (
-              <div className="print-flex">
-                <span>Kembalian:</span>
-                <span>{fmtRp(receipt.change)}</span>
-              </div>
-            )}
-            <p style={{ textAlign: "center", marginTop: "15px" }}>
-              *Harga sudah termasuk Pajak (11%)<br />
-              Terima Kasih!
-            </p>
           </div>
         </>
       )}
@@ -1329,108 +1418,28 @@ export default function RestaurantJoglo() {
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setTxnEditModal(null)}>
           <div className="modal" style={{ maxWidth: 460, maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary, marginBottom: ".2rem" }}>✏️ Edit Transaksi</div>
-            <div style={{ fontSize: ".72rem", color: C.textMuted, marginBottom: "1rem" }}>{txnForm.no} · {fmtDate(txnForm.date)} · Kasir: {txnForm.cashier}</div>
-            
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: ".5rem", marginBottom: "1rem" }}>
-               <div>
-                  <label style={{ fontSize: ".72rem", color: C.primaryMid, fontWeight: 600 }}>Tipe Pesanan</label>
-                  <select className="inp" value={txnForm.orderType || "Dine-in"} onChange={(e) => setTxnForm(p => ({ ...p, orderType: e.target.value }))} style={{ padding: ".4rem" }}>
-                     <option value="Dine-in">Dine-in</option>
-                     <option value="Takeaway">Takeaway</option>
-                     <option value="Online">Online</option>
-                  </select>
-               </div>
-               <div>
-                  <label style={{ fontSize: ".72rem", color: C.primaryMid, fontWeight: 600 }}>Keterangan / Meja</label>
-                  <input className="inp" value={txnForm.orderNote || ""} onChange={(e) => setTxnForm(p => ({ ...p, orderNote: e.target.value }))} style={{ padding: ".4rem" }} />
-               </div>
-            </div>
-
-            <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Rincian Item</div>
-            <div style={{ background: C.surfaceAlt, borderRadius: 10, padding: ".6rem", marginBottom: "1rem", display: "flex", flexDirection: "column", gap: ".35rem" }}>
-              {txnForm.items && txnForm.items.length > 0 ? txnForm.items.map((item, idx) => (
-                <div key={idx} style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
-                  <span style={{ fontSize: "1.1rem" }}>{item.icon || "🍽️"}</span>
-                  <div style={{ flex: 1, fontSize: ".8rem", color: C.text }}>{item.name}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: ".3rem" }}>
-                    <button className="btn" onClick={() => txnItemDec(idx)}
-                      style={{ width: 22, height: 22, borderRadius: "50%", border: `1.5px solid ${C.red}`, background: "white", color: C.red, fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-                    <span style={{ fontSize: ".85rem", fontWeight: 700, minWidth: 18, textAlign: "center" }}>{item.qty}</span>
-                    <button className="btn" onClick={() => txnItemInc(idx)}
-                      style={{ width: 22, height: 22, borderRadius: "50%", background: C.accent, border: "none", color: "white", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
-                  </div>
-                  <div style={{ fontSize: ".75rem", color: C.accent, fontWeight: 600, minWidth: 70, textAlign: "right" }}>{fmtRp(item.price * item.qty)}</div>
-                </div>
-              )) : (
-                <div style={{ fontSize: ".8rem", color: C.textMuted, textAlign: "center", padding: ".5rem" }}>Semua item dihapus</div>
-              )}
-              
-              <div style={{ borderTop: `1px dashed ${C.border}`, marginTop: ".25rem", paddingTop: ".4rem" }}>
-                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".4rem" }}>
-                    <span style={{ fontSize: ".75rem", fontWeight: 600, color: C.primaryMid }}>Diskon Tambahan (Rp)</span>
-                    <input className="inp" type="number" value={txnForm.discount || ""} onChange={(e) => setTxnForm(p => ({ ...p, discount: e.target.value }))} style={{ padding: ".3rem", width: 90, textAlign: "right" }} />
-                 </div>
-                 <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: ".85rem" }}>
-                   <span>Total Baru</span>
-                   <span style={{ color: C.accent }}>{fmtRp(txnFormTotal)}</span>
-                 </div>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: "1rem" }}>
-              <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".4rem" }}>Metode Pembayaran</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: ".4rem" }}>
-                {[["Tunai", "💵"], ["QRIS", "📱"], ["Kartu", "💳"]].map(([m, ic]) => (
-                  <button key={m} className="btn" onClick={() => setTxnForm(p => ({ ...p, method: m }))}
-                    style={{ padding: ".5rem", border: `2px solid ${txnForm.method === m ? C.accent : C.border}`, borderRadius: 9, background: txnForm.method === m ? "#FFF3DC" : "white", color: txnForm.method === m ? C.accent : C.primaryMid, fontSize: ".78rem", fontWeight: txnForm.method === m ? 600 : 400 }}>
-                    {ic} {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {txnForm.method === "Tunai" && (
-              <div style={{ marginBottom: "1rem" }}>
-                <div style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, marginBottom: ".35rem" }}>Uang Diterima</div>
-                <input className="inp" type="number" value={txnForm.cash || ""} onChange={(e) => setTxnForm(p => ({ ...p, cash: e.target.value }))} />
-                {txnFormChange >= 0 && Number(txnForm.cash) > 0 && (
-                  <div style={{ marginTop: ".35rem", fontSize: ".83rem", color: txnFormChange >= 0 ? C.green : C.red, fontWeight: 600 }}>
-                    Kembalian: {fmtRp(txnFormChange)}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: ".5rem", marginTop: ".25rem" }}>
+            <div style={{ fontSize: ".72rem", color: C.textMuted, marginBottom: "1rem" }}>{txnForm.no} · {fmtDate(txnForm.date)}</div>
+            <div style={{ display: "flex", gap: ".5rem", marginTop: ".5rem" }}>
               <button className="btn" onClick={() => setTxnEditModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={saveTxnEdit} disabled={txnForm.items && txnForm.items.length === 0}
-                style={{ flex: 2, padding: ".6rem", background: txnForm.items && txnForm.items.length > 0 ? C.accent : "#ccc", color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700, cursor: txnForm.items && txnForm.items.length > 0 ? "pointer" : "not-allowed" }}>
-                ✅ Simpan Perubahan
-              </button>
+              <button className="btn" onClick={saveTxnEdit} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontWeight: 700 }}>Simpan Perubahan</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Konfirmasi Hapus Transaksi */}
       {confirmDelTxn && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setConfirmDelTxn(null)}>
           <div className="modal" style={{ maxWidth: 360, textAlign: "center" }}>
             <div style={{ fontSize: "2rem", marginBottom: ".5rem" }}>🗑️</div>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1rem", color: C.primary, marginBottom: ".5rem" }}>Hapus transaksi ini?</div>
-            <div style={{ fontSize: ".85rem", color: C.textMid, marginBottom: "1.25rem" }}>
-              <strong>{confirmDelTxn.no}</strong> akan dihapus permanen dan stok akan dikembalikan secara otomatis.
-            </div>
             <div style={{ display: "flex", gap: ".5rem" }}>
               <button className="btn" onClick={() => setConfirmDelTxn(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={doDeleteTxn}
-                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus & Kembalikan</button>
+              <button className="btn" onClick={doDeleteTxn} style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontWeight: 700 }}>Hapus</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── MODAL EDIT/TAMBAH MENU TERBARU (DENGAN RESEP) ── */}
       {menuModal && authUser.role === "owner" && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setMenuModal(null)}>
           <div className="modal" style={{ maxHeight: "90vh", overflowY: "auto" }}>
@@ -1457,38 +1466,28 @@ export default function RestaurantJoglo() {
                 <input className="inp" type="number" placeholder="10000" value={menuForm.price || ""} onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))} />
               </div>
 
-              {/* BLOK KHUSUS RESEP BAHAN */}
               <div style={{ marginTop: ".75rem", borderTop: `1.5px dashed ${C.border}`, paddingTop: ".75rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ".5rem" }}>
                   <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600 }}>Resep Pemotong Stok (Opsional)</label>
                   <button className="btn" onClick={addRecipeRow} style={{ background: C.greenBg, color: C.green, padding: ".25rem .5rem", borderRadius: 6, fontSize: ".7rem", fontWeight: 600 }}>+ Bahan</button>
                 </div>
-                
                 {(menuForm.recipe || []).map((r, idx) => (
                   <div key={idx} style={{ display: "flex", gap: ".4rem", marginBottom: ".4rem" }}>
-                    <input className="inp" placeholder="Nama Stok (misal: gula)" value={r.stockKeyword} onChange={(e) => updateRecipeRow(idx, "stockKeyword", e.target.value)} style={{ flex: 2, padding: ".4rem", fontSize: ".75rem" }} />
+                    <input className="inp" placeholder="Nama Stok" value={r.stockKeyword} onChange={(e) => updateRecipeRow(idx, "stockKeyword", e.target.value)} style={{ flex: 2, padding: ".4rem", fontSize: ".75rem" }} />
                     <input className="inp" type="number" placeholder="Qty" value={r.qty} onChange={(e) => updateRecipeRow(idx, "qty", e.target.value)} style={{ flex: 1, padding: ".4rem", fontSize: ".75rem" }} />
                     <button className="btn" onClick={() => removeRecipeRow(idx)} style={{ background: C.redBg, color: C.red, width: 32, borderRadius: 6 }}>×</button>
                   </div>
                 ))}
-                
-                <div style={{ fontSize: ".65rem", color: C.textMuted, marginTop: ".3rem", lineHeight: 1.3 }}>
-                  *Jika diisi, stok akan otomatis terpotong saat menu ini dibeli. Pastikan <b>Nama Stok</b> persis sama dengan nama bahan di tab Stok. Contoh Qty: 0.15 (artinya 150 gram).
-                </div>
               </div>
-
             </div>
             <div style={{ display: "flex", gap: ".5rem", marginTop: "1.25rem" }}>
               <button className="btn" onClick={() => setMenuModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={saveMenu} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>
-                {menuModal === "new" ? "+ Tambahkan Menu" : "✅ Simpan Menu"}
-              </button>
+              <button className="btn" onClick={saveMenu} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontWeight: 700 }}>Simpan Menu</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Stock Edit Modal */}
       {stockModal && authUser.role === "owner" && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setStockModal(null)}>
           <div className="modal">
@@ -1503,78 +1502,56 @@ export default function RestaurantJoglo() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".5rem" }}>
                 <div>
                   <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Satuan</label>
-                  <input className="inp" placeholder="kg / liter / pack" value={stockForm.unit || ""} onChange={(e) => setStockForm((p) => ({ ...p, unit: e.target.value }))} />
+                  <input className="inp" placeholder="kg / liter" value={stockForm.unit || ""} onChange={(e) => setStockForm((p) => ({ ...p, unit: e.target.value }))} />
                 </div>
                 <div>
-                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Jumlah Stok</label>
+                  <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Jumlah</label>
                   <input className="inp" type="number" placeholder="50" value={stockForm.quantity || ""} onChange={(e) => setStockForm((p) => ({ ...p, quantity: e.target.value }))} />
                 </div>
               </div>
               <div>
-                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Stok Minimum (batas alert)</label>
+                <label style={{ fontSize: ".78rem", color: C.primaryMid, fontWeight: 600, display: "block", marginBottom: ".3rem" }}>Stok Minimum</label>
                 <input className="inp" type="number" placeholder="10" value={stockForm.minQty || ""} onChange={(e) => setStockForm((p) => ({ ...p, minQty: e.target.value }))} />
               </div>
             </div>
             <div style={{ display: "flex", gap: ".5rem", marginTop: "1.25rem" }}>
               <button className="btn" onClick={() => setStockModal(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={saveStock} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontSize: ".88rem", fontWeight: 700 }}>
-                {stockModal === "new" ? "+ Tambahkan" : "✅ Simpan"}
-              </button>
+              <button className="btn" onClick={saveStock} style={{ flex: 2, padding: ".6rem", background: C.accent, color: "white", borderRadius: 10, fontWeight: 700 }}>Simpan</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Confirm Delete Menu/Stok */}
       {confirmDel && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setConfirmDel(null)}>
           <div className="modal" style={{ maxWidth: 360, textAlign: "center" }}>
             <div style={{ fontSize: "2rem", marginBottom: ".5rem" }}>🗑️</div>
             <div style={{ fontFamily: "'Playfair Display',serif", fontSize: "1rem", color: C.primary, marginBottom: ".5rem" }}>Hapus data ini?</div>
-            <div style={{ fontSize: ".85rem", color: C.textMid, marginBottom: "1.25rem" }}>
-              <strong>{confirmDel.name}</strong> akan dihapus permanen.
-            </div>
             <div style={{ display: "flex", gap: ".5rem" }}>
               <button className="btn" onClick={() => setConfirmDel(null)} style={{ flex: 1, padding: ".6rem", background: "#F0E0C0", color: C.primaryMid, borderRadius: 10 }}>Batal</button>
-              <button className="btn" onClick={() => handleDelete(confirmDel.type, confirmDel.id)}
-                style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontFamily: "'Playfair Display',serif", fontWeight: 700 }}>Hapus</button>
+              <button className="btn" onClick={() => handleDelete(confirmDel.type, confirmDel.id)} style={{ flex: 1, padding: ".6rem", background: C.red, color: "white", borderRadius: 10, fontWeight: 700 }}>Hapus</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal Riwayat Transaksi */}
       {showHistory && (
         <div className="overlay no-print" onClick={(e) => e.target === e.currentTarget && setShowHistory(false)}>
           <div className="modal" style={{ maxWidth: 450, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary }}>🕒 Riwayat Transaksi Hari Ini</span>
-              <button className="btn" onClick={() => setShowHistory(false)} style={{ background: "#F0E0C0", color: C.primaryMid, borderRadius: 99, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" }}>×</button>
+              <span style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.05rem", color: C.primary }}>🕒 Riwayat Transaksi</span>
+              <button className="btn" onClick={() => setShowHistory(false)} style={{ background: "#F0E0C0", color: C.primaryMid, borderRadius: 99, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
             </div>
-            <div style={{ overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: ".5rem", paddingRight: ".2rem" }}>
+            <div style={{ overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: ".5rem" }}>
               {txns.slice(0, 20).map(tx => (
                 <div key={tx.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: ".6rem .75rem", background: C.surfaceAlt, borderRadius: 9, border: `1px solid ${C.borderLight}` }}>
                   <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: ".4rem" }}>
-                      <span style={{ fontWeight: 600, fontSize: ".85rem", color: C.text }}>{tx.no}</span>
-                      <span style={{ fontSize: ".6rem", background: "#E8D5B7", color: C.primaryMid, padding: "1px 6px", borderRadius: 4 }}>{tx.orderType || "Dine-in"}</span>
-                    </div>
-                    <div style={{ fontSize: ".7rem", color: C.textLight, marginTop: ".1rem" }}>
-                      {fmtDate(tx.date)} {tx.orderNote && `• ${tx.orderNote}`}
-                    </div>
+                    <div style={{ fontWeight: 600, fontSize: ".85rem", color: C.text }}>{tx.no} • {tx.orderType}</div>
+                    <div style={{ fontSize: ".7rem", color: C.textLight }}>{fmtDate(tx.date)} {tx.orderNote && `• ${tx.orderNote}`}</div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: ".75rem" }}>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontWeight: 700, fontSize: ".85rem", color: C.accent }}>{fmtRp(tx.total)}</div>
-                      <div style={{ fontSize: ".65rem", color: C.primaryMid }}>Kasir: {tx.cashier}</div>
-                    </div>
-                    <button className="btn" onClick={() => setReceipt(tx)} style={{ padding: ".35rem .6rem", background: C.greenBg, color: C.green, borderRadius: 7, fontSize: ".75rem", fontWeight: 600 }}>
-                      🖨️ Cetak
-                    </button>
-                  </div>
+                  <button className="btn" onClick={() => setReceipt(tx)} style={{ padding: ".35rem .6rem", background: C.greenBg, color: C.green, borderRadius: 7, fontSize: ".75rem", fontWeight: 600 }}>Cetak</button>
                 </div>
               ))}
-              {txns.length === 0 && <div style={{ textAlign: "center", color: C.textMuted, padding: "1rem", fontSize: ".85rem" }}>Belum ada transaksi.</div>}
             </div>
           </div>
         </div>
