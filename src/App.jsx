@@ -199,12 +199,12 @@ export default function RestaurantJoglo() {
     });
 
     const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })); // Posisi id digeser ke belakang
       setMenu(data.length > 0 ? data : INIT_MENU);
     });
 
     const unsubStock = onSnapshot(collection(db, "stock"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })); // Posisi id digeser ke belakang
       setStock(data.length > 0 ? data : INIT_STOCK);
     });
 
@@ -333,8 +333,15 @@ export default function RestaurantJoglo() {
     try {
       for (const m of menu) await deleteDoc(doc(db, "menu", m.id));
       for (const s of stock) await deleteDoc(doc(db, "stock", s.id));
-      for (const m of INIT_MENU) await addDoc(collection(db, "menu"), m); // Save full object including recipe if any
-      for (const s of INIT_STOCK) await addDoc(collection(db, "stock"), { name: s.name, unit: s.unit, quantity: s.quantity, minQty: s.minQty });
+      
+      for (const m of INIT_MENU) {
+        const { id, ...menuData } = m; // Buang id bawaan VS Code
+        await addDoc(collection(db, "menu"), menuData); 
+      }
+      for (const s of INIT_STOCK) {
+        const { id, ...stockData } = s; 
+        await addDoc(collection(db, "stock"), stockData);
+      }
       alert("Selesai! Database berhasil di-reset.");
     } catch (e) {
       alert("Gagal mereset database. Cek koneksi internet.");
@@ -479,7 +486,7 @@ export default function RestaurantJoglo() {
     
     // Bersihkan resep kosong sebelum disimpan
     const cleanRecipe = (menuForm.recipe || [])
-      .filter(r => r.stockKeyword.trim() !== "" && r.qty !== "")
+      .filter(r => r.stockKeyword && r.stockKeyword.trim() !== "" && r.qty !== "")
       .map(r => ({ stockKeyword: r.stockKeyword.trim(), qty: Number(r.qty) }));
 
     const itemData = { 
@@ -489,6 +496,16 @@ export default function RestaurantJoglo() {
       icon: menuForm.icon || "🍽️",
       recipe: cleanRecipe
     };
+    
+    try {
+      if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
+      else await updateDoc(doc(db, "menu", menuForm.id), itemData);
+      setMenuModal(null);
+    } catch (e) { 
+      alert("Gagal menyimpan menu ke Cloud!");
+      console.error(e);
+    }
+  };
     
     try {
       if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
