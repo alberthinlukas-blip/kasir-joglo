@@ -483,35 +483,28 @@ export default function RestaurantJoglo() {
 
   const saveMenu = async () => {
     if (!menuForm.name || !menuForm.price) return;
-    
+
     // Bersihkan resep kosong sebelum disimpan
     const cleanRecipe = (menuForm.recipe || [])
       .filter(r => r.stockKeyword && r.stockKeyword.trim() !== "" && r.qty !== "")
       .map(r => ({ stockKeyword: r.stockKeyword.trim(), qty: Number(r.qty) }));
 
-    const itemData = { 
-      name: menuForm.name, 
-      category: menuForm.category || "Umum", 
-      price: Number(menuForm.price), 
+    const itemData = {
+      name: menuForm.name,
+      category: menuForm.category || "Umum",
+      price: Number(menuForm.price),
       icon: menuForm.icon || "🍽️",
       recipe: cleanRecipe
     };
-    
+
     try {
       if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
       else await updateDoc(doc(db, "menu", menuForm.id), itemData);
       setMenuModal(null);
-    } catch (e) { 
+    } catch (e) {
       alert("Gagal menyimpan menu ke Cloud!");
       console.error(e);
     }
-  };
-    
-    try {
-      if (menuModal === "new") await addDoc(collection(db, "menu"), itemData);
-      else await updateDoc(doc(db, "menu", menuForm.id), itemData);
-      setMenuModal(null);
-    } catch (e) { alert("Gagal menyimpan menu ke Cloud!"); }
   };
   // ----------------------------------
 
