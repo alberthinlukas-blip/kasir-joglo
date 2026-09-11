@@ -1382,7 +1382,7 @@ export default function RestaurantJoglo() {
             <p style={{ margin: 0 }}>
               Waktu: {fmtDate(receipt.date)}<br />
               No. Inv: {receipt.no}<br />
-              Kasir: {authUser.username}<br/>
+              Kasir: {authUser?.username || "Kasir"}<br/>
               <strong>Tipe: {receipt.orderType} {receipt.orderNote && `(${receipt.orderNote})`}</strong>
             </p>
             <div className="garis-putus"></div>
@@ -1405,10 +1405,25 @@ export default function RestaurantJoglo() {
               </tbody>
             </table>
             <div className="garis-putus"></div>
+            
             <div className="print-flex" style={{ fontWeight: "bold", fontSize: "16px" }}>
               <span>TOTAL BAYAR:</span>
               <span>{fmtRp(receipt.total)}</span>
             </div>
+            <div className="garis-putus"></div>
+            <div className="print-flex">
+              <span>Bayar ({receipt.method || "Tunai"}):</span>
+              <span>{fmtRp(receipt.cash || receipt.total)}</span>
+            </div>
+            <div className="print-flex">
+              <span>Kembalian:</span>
+              <span>{fmtRp(receipt.change || 0)}</span>
+            </div>
+
+            <p style={{ textAlign: "center", marginTop: "15px" }}>
+              *Harga sudah termasuk Pajak (11%)<br />
+              Terima Kasih!
+            </p>
           </div>
         </>
       )}
